@@ -16,7 +16,7 @@ COMPATIBLE_MACHINE ?= "invalid"
 ARCH = "arm64"
 
 SRC_URI = " \
-    git://android.googlesource.com/kernel/common.git;protocol=https;branch=android-4.19-q-release \
+    git://android.googlesource.com/kernel/common.git;protocol=https;branch=deprecated/android-4.19-q-release \
     "
 
 # ASB-2020-06-05_4.19-q-release tag commit
