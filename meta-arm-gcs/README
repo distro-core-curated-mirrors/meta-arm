@@ -1,0 +1,33 @@
+Guarded Control Stack prototype
+===============================
+
+To build:
+
+First, install Kas if you don't already have it:
+
+$ pip3 install --user kas
+
+Then use Kas to build an image:
+
+$ kas build --update gcs.yml
+
+To run the image inside an FVP:
+
+$ kas shell gcs.yml -c "../../scripts/runfvp --console"
+
+
+Verification:
+
+On boot, the kernel should detect that the cores have GCS:
+
+  CPU features: detected: Guarded Control Stack (GCS)
+
+Binaries should be tagged with PAC/BTI/GCS:
+
+  $ readelf  -n /bin/bash | grep AArch
+  Properties: AArch64 feature: BTI, PAC, GCS
+
+Enabling GCS tunables shouldn't cause crashes:
+
+  $ GLIBC_TUNABLES=glibc.cpu.aarch64_gcs=1:glibc.cpu.aarch64_gcs_policy=2 ls /
+  bin  boot  dev	etc  home  lib	lost+found  media  mnt	proc  run  sbin  sys  tmp  usr	var

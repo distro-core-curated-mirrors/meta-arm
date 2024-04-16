@@ -1,0 +1,1 @@
+EXTRA_OEMAKE:append:fvp-base = " CTX_INCLUDE_AARCH32_REGS=0"

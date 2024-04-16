@@ -1,0 +1,1872 @@
+Upstream-Status: Pending [vendors/ARM/gcs in gcc git]
+Signed-off-by: Ross Burton <ross.burton@arm.com>
+
+From e66be9a852ed255469f34dcd5ecf4c30e8721b66 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Mon, 19 Jun 2023 12:57:56 +0100
+Subject: [PATCH 01/19] aarch64: Add -mbranch-protection=gcs option
+
+This enables Guarded Control Stack (GCS) compatible code generation.
+
+The "standard" branch-protection type enables it, and the default
+depends on the compiler default.
+
+TODO: gcs compatibility marking is missing.
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64-protos.h (aarch_gcs_enabled): Declare.
+	* config/aarch64/aarch64.cc (aarch_gcs_enabled): Define.
+	(aarch_handle_no_branch_protection): Handle gcs.
+	(aarch_handle_standard_branch_protection): Handle gcs.
+	(aarch_handle_gcs_protection): New.
+	* config/aarch64/aarch64.opt: Add aarch_enable_gcs.
+	* configure: Regenerate.
+	* configure.ac: Handle gcs in --enable-standard-branch-protection.
+	* doc/invoke.texi: Document -mbranch-protection=gcs.
+---
+ gcc/config/aarch64/aarch64-protos.h |  2 ++
+ gcc/config/aarch64/aarch64.cc       | 24 ++++++++++++++++++++++++
+ gcc/config/aarch64/aarch64.opt      |  3 +++
+ gcc/configure                       |  2 +-
+ gcc/configure.ac                    |  2 +-
+ gcc/doc/invoke.texi                 |  5 +++--
+ 6 files changed, 34 insertions(+), 4 deletions(-)
+
+diff --git a/gcc/config/aarch64/aarch64-protos.h b/gcc/config/aarch64/aarch64-protos.h
+index bd719b992a5..2802bc935c9 100644
+--- a/gcc/config/aarch64/aarch64-protos.h
++++ b/gcc/config/aarch64/aarch64-protos.h
+@@ -1113,4 +1113,6 @@ extern void aarch64_adjust_reg_alloc_order ();
+ bool aarch64_optimize_mode_switching (aarch64_mode_entity);
+ void aarch64_restore_za (rtx);
+ 
++extern bool aarch64_gcs_enabled ();
++
+ #endif /* GCC_AARCH64_PROTOS_H */
+diff --git a/gcc/config/aarch64/aarch64.cc b/gcc/config/aarch64/aarch64.cc
+index 1ea84c8bd73..73969721906 100644
+--- a/gcc/config/aarch64/aarch64.cc
++++ b/gcc/config/aarch64/aarch64.cc
+@@ -8375,6 +8375,13 @@ aarch_bti_j_insn_p (rtx_insn *insn)
+   return GET_CODE (pat) == UNSPEC_VOLATILE && XINT (pat, 1) == UNSPECV_BTI_J;
+ }
+ 
++/* Return TRUE if Guarded Control Stack is enabled.  */
++bool
++aarch64_gcs_enabled (void)
++{
++  return (aarch64_enable_gcs == 1);
++}
++
+ /* Check if X (or any sub-rtx of X) is a PACIASP/PACIBSP instruction.  */
+ bool
+ aarch_pac_insn_p (rtx x)
+@@ -18694,6 +18701,7 @@ aarch64_handle_no_branch_protection (void)
+ {
+   aarch_ra_sign_scope = AARCH_FUNCTION_NONE;
+   aarch_enable_bti = 0;
++  aarch64_enable_gcs = 0;
+ }
+ 
+ static void
+@@ -18702,6 +18710,7 @@ aarch64_handle_standard_branch_protection (void)
+   aarch_ra_sign_scope = AARCH_FUNCTION_NON_LEAF;
+   aarch64_ra_sign_key = AARCH64_KEY_A;
+   aarch_enable_bti = 1;
++  aarch64_enable_gcs = 1;
+ }
+ 
+ static void
+@@ -18728,6 +18737,11 @@ aarch64_handle_bti_protection (void)
+ {
+   aarch_enable_bti = 1;
+ }
++static void
++aarch64_handle_gcs_protection (void)
++{
++  aarch64_enable_gcs = 1;
++}
+ 
+ static const struct aarch_branch_protect_type aarch64_pac_ret_subtypes[] = {
+   { "leaf", false, aarch64_handle_pac_ret_leaf, NULL, 0 },
+@@ -18742,6 +18756,7 @@ static const struct aarch_branch_protect_type aarch64_branch_protect_types[] =
+   { "pac-ret", false, aarch64_handle_pac_ret_protection,
+     aarch64_pac_ret_subtypes, ARRAY_SIZE (aarch64_pac_ret_subtypes) },
+   { "bti", false, aarch64_handle_bti_protection, NULL, 0 },
++  { "gcs", false, aarch64_handle_gcs_protection, NULL, 0 },
+   { NULL, false, NULL, NULL, 0 }
+ };
+ 
+@@ -18842,6 +18857,15 @@ aarch64_override_options (void)
+ #endif
+     }
+ 
++  if (aarch64_enable_gcs == 2)
++    {
++#ifdef TARGET_ENABLE_GCS
++      aarch64_enable_gcs = 1;
++#else
++      aarch64_enable_gcs = 0;
++#endif
++    }
++
+   /* Return address signing is currently not supported for ILP32 targets.  For
+      LP64 targets use the configured option in the absence of a command-line
+      option for -mbranch-protection.  */
+diff --git a/gcc/config/aarch64/aarch64.opt b/gcc/config/aarch64/aarch64.opt
+index 6356c419399..aeb710449fb 100644
+--- a/gcc/config/aarch64/aarch64.opt
++++ b/gcc/config/aarch64/aarch64.opt
+@@ -39,6 +39,9 @@ aarch64_feature_flags aarch64_isa_flags = 0
+ TargetVariable
+ unsigned aarch_enable_bti = 2
+ 
++TargetVariable
++unsigned aarch64_enable_gcs = 2
++
+ TargetVariable
+ enum aarch64_key_type aarch64_ra_sign_key = AARCH64_KEY_A
+ 
+diff --git a/gcc/configure b/gcc/configure
+index 266ab8f84b2..45725639fd2 100755
+--- a/gcc/configure
++++ b/gcc/configure
+@@ -28221,7 +28221,7 @@ if test "${enable_standard_branch_protection+set}" = set; then :
+   enableval=$enable_standard_branch_protection;
+         case $enableval in
+           yes)
+-            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1"
++            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1 TARGET_ENABLE_GCS=1"
+             ;;
+           no)
+             ;;
+diff --git a/gcc/configure.ac b/gcc/configure.ac
+index a5aec1bc967..30d59ce7949 100644
+--- a/gcc/configure.ac
++++ b/gcc/configure.ac
+@@ -4440,7 +4440,7 @@ AS_HELP_STRING([--disable-standard-branch-protection],
+       [
+         case $enableval in
+           yes)
+-            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1"
++            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1 TARGET_ENABLE_GCS=1"
+             ;;
+           no)
+             ;;
+diff --git a/gcc/doc/invoke.texi b/gcc/doc/invoke.texi
+index 1006510fc6a..b5e2697193f 100644
+--- a/gcc/doc/invoke.texi
++++ b/gcc/doc/invoke.texi
+@@ -801,7 +801,7 @@ Objective-C and Objective-C++ Dialects}.
+ -mpc-relative-literal-loads
+ -msign-return-address=@var{scope}
+ -mbranch-protection=@var{none}|@var{standard}|@var{pac-ret}[+@var{leaf}
+-+@var{b-key}]|@var{bti}
+++@var{b-key}]|@var{bti}|@var{gcs}
+ -mharden-sls=@var{opts}
+ -march=@var{name}  -mcpu=@var{name}  -mtune=@var{name}
+ -moverride=@var{string}  -mverbose-cost-dump
+@@ -21408,7 +21408,7 @@ default value is @samp{none}. This option has been deprecated by
+ -mbranch-protection.
+ 
+ @opindex mbranch-protection
+-@item -mbranch-protection=@var{none}|@var{standard}|@var{pac-ret}[+@var{leaf}+@var{b-key}]|@var{bti}
++@item -mbranch-protection=@var{none}|@var{standard}|@var{pac-ret}[+@var{leaf}+@var{b-key}]|@var{bti}|@var{gcs}
+ Select the branch protection features to use.
+ @samp{none} is the default and turns off all types of branch protection.
+ @samp{standard} turns on all types of branch protection features.  If a feature
+@@ -21421,6 +21421,7 @@ argument @samp{leaf} can be used to extend the signing to include leaf
+ functions.  The optional argument @samp{b-key} can be used to sign the functions
+ with the B-key instead of the A-key.
+ @samp{bti} turns on branch target identification mechanism.
++@samp{gcs} turns on guarded control stack compatible code generation.
+ 
+ @opindex mharden-sls
+ @item -mharden-sls=@var{opts}
+-- 
+2.34.1
+
+
+From c947c0551c793aeff90139718eb7d731d543ee08 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 30 Jun 2023 16:31:23 +0100
+Subject: [PATCH 02/19] aarch64: Add branch-protection target pragma tests
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/pragma_cpp_predefs_4.c: Add branch-protection
+	tests.
+---
+ .../gcc.target/aarch64/pragma_cpp_predefs_4.c | 50 +++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
+index 23ebe5e4f50..8e707630774 100644
+--- a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
++++ b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
+@@ -83,3 +83,53 @@
+ #ifndef __ARM_FEATURE_SME_F64F64
+ #error Foo
+ #endif
++
++#pragma GCC target "branch-protection=standard"
++#ifndef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#if __ARM_FEATURE_PAC_DEFAULT != 1
++#error Foo
++#endif
++
++#pragma GCC target ("branch-protection=none")
++#ifdef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#ifdef __ARM_FEATURE_PAC_DEFAULT
++#error Foo
++#endif
++
++#pragma GCC push_options
++#pragma GCC target "branch-protection=bti+pac-ret"
++#ifndef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#pragma GCC pop_options
++#ifdef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++
++#pragma GCC target "branch-protection=bti"
++#ifndef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#ifdef __ARM_FEATURE_PAC_DEFAULT
++#error Foo
++#endif
++
++#pragma GCC target "branch-protection=pac-ret"
++#ifdef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#if __ARM_FEATURE_PAC_DEFAULT != 1
++#error Foo
++#endif
++
++#pragma GCC target "branch-protection=pac-ret+leaf+b-key"
++#ifdef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#if __ARM_FEATURE_PAC_DEFAULT != 6
++#error Foo
++#endif
+-- 
+2.34.1
+
+
+From 99367f7410b3c328d67051734145f3970b84ee6f Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 30 Jun 2023 16:50:23 +0100
+Subject: [PATCH 03/19] aarch64: Add target pragma tests for gcs
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/pragma_cpp_predefs_4.c: Add gcs specific
+	tests.
+---
+ .../gcc.target/aarch64/pragma_cpp_predefs_4.c | 35 +++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
+index 8e707630774..417293d4d5a 100644
+--- a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
++++ b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_4.c
+@@ -91,6 +91,9 @@
+ #if __ARM_FEATURE_PAC_DEFAULT != 1
+ #error Foo
+ #endif
++#ifndef __ARM_FEATURE_GCS_DEFAULT
++#error Foo
++#endif
+ 
+ #pragma GCC target ("branch-protection=none")
+ #ifdef __ARM_FEATURE_BTI_DEFAULT
+@@ -99,6 +102,9 @@
+ #ifdef __ARM_FEATURE_PAC_DEFAULT
+ #error Foo
+ #endif
++#ifdef __ARM_FEATURE_GCS_DEFAULT
++#error Foo
++#endif
+ 
+ #pragma GCC push_options
+ #pragma GCC target "branch-protection=bti+pac-ret"
+@@ -117,6 +123,9 @@
+ #ifdef __ARM_FEATURE_PAC_DEFAULT
+ #error Foo
+ #endif
++#ifdef __ARM_FEATURE_GCS_DEFAULT
++#error Foo
++#endif
+ 
+ #pragma GCC target "branch-protection=pac-ret"
+ #ifdef __ARM_FEATURE_BTI_DEFAULT
+@@ -133,3 +142,29 @@
+ #if __ARM_FEATURE_PAC_DEFAULT != 6
+ #error Foo
+ #endif
++
++#pragma GCC target "branch-protection=gcs"
++#ifdef __ARM_FEATURE_BTI_DEFAULT
++#error Foo
++#endif
++#ifdef __ARM_FEATURE_PAC_DEFAULT
++#error Foo
++#endif
++#ifndef __ARM_FEATURE_GCS_DEFAULT
++#error Foo
++#endif
++
++#pragma GCC target "arch=armv8.8-a+gcs"
++#ifndef __ARM_FEATURE_GCS
++#error Foo
++#endif
++
++#pragma GCC target "arch=armv8.8-a+nogcs"
++#ifdef __ARM_FEATURE_GCS
++#error Foo
++#endif
++
++#pragma GCC target "arch=armv8.8-a"
++#ifdef __ARM_FEATURE_GCS
++#error Foo
++#endif
+-- 
+2.34.1
+
+
+From f2a000e3b40953985a778875d1a908822ca9ffbd Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 15:37:49 +0100
+Subject: [PATCH 04/19] aarch64: Add support for chkfeat insn
+
+This is a hint space instruction to check for enabled HW features and
+update the x16 register accordingly.
+
+Use unspec_volatile to prevent reordering it around calls since calls
+can enable or disable HW features.
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64.md (aarch64_chkfeat): New.
+---
+ gcc/config/aarch64/aarch64.md | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64.md b/gcc/config/aarch64/aarch64.md
+index 385a669b9b3..a20462303b5 100644
+--- a/gcc/config/aarch64/aarch64.md
++++ b/gcc/config/aarch64/aarch64.md
+@@ -378,6 +378,7 @@
+     UNSPECV_BTI_C		; Represent BTI c.
+     UNSPECV_BTI_J		; Represent BTI j.
+     UNSPECV_BTI_JC		; Represent BTI jc.
++    UNSPECV_CHKFEAT		; Represent CHKFEAT X16.
+     UNSPECV_TSTART		; Represent transaction start.
+     UNSPECV_TCOMMIT		; Represent transaction commit.
+     UNSPECV_TCANCEL		; Represent transaction cancel.
+@@ -8258,6 +8259,14 @@
+   "msr\tnzcv, %0"
+ )
+ 
++;; CHKFEAT instruction
++(define_insn "aarch64_chkfeat"
++  [(set (reg:DI R16_REGNUM)
++        (unspec_volatile:DI [(reg:DI R16_REGNUM)] UNSPECV_CHKFEAT))]
++  ""
++  "hint\\t40 // chkfeat x16"
++)
++
+ ;; AdvSIMD Stuff
+ (include "aarch64-simd.md")
+ 
+-- 
+2.34.1
+
+
+From 6a5358558591549fb2fb5b210c9681b0d694d1af Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 15:24:18 +0100
+Subject: [PATCH 05/19] aarch64: Add __builtin_aarch64_chkfeat
+
+Builtin for chkfeat: the input argument is used to initialize x16 then
+execute chkfeat and return the updated x16.
+
+Note: ACLE __chkfeat(x) plans to flip the bits to be more intuitive
+(xor the input to output), but for the builtin that seems unnecessary
+complication.
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64-builtins.cc (enum aarch64_builtins):
+	Define AARCH64_BUILTIN_CHKFEAT.
+	(aarch64_general_init_builtins): Handle chkfeat.
+	(aarch64_general_expand_builtin): Handle chkfeat.
+---
+ gcc/config/aarch64/aarch64-builtins.cc | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64-builtins.cc b/gcc/config/aarch64/aarch64-builtins.cc
+index 75d21de1401..1c08f56ab6b 100644
+--- a/gcc/config/aarch64/aarch64-builtins.cc
++++ b/gcc/config/aarch64/aarch64-builtins.cc
+@@ -788,6 +788,8 @@ enum aarch64_builtins
+   AARCH64_PLDX,
+   AARCH64_PLI,
+   AARCH64_PLIX,
++  /* Armv8.9-A / Armv9.4-A builtins.  */
++  AARCH64_BUILTIN_CHKFEAT,
+   AARCH64_BUILTIN_MAX
+ };
+ 
+@@ -2084,6 +2086,12 @@ aarch64_general_init_builtins (void)
+   if (TARGET_MEMTAG)
+     aarch64_init_memtag_builtins ();
+ 
++  tree ftype_chkfeat
++    = build_function_type_list (uint64_type_node, uint64_type_node, NULL);
++  aarch64_builtin_decls[AARCH64_BUILTIN_CHKFEAT]
++    = aarch64_general_add_builtin ("__builtin_aarch64_chkfeat", ftype_chkfeat,
++				   AARCH64_BUILTIN_CHKFEAT);
++
+   if (in_lto_p)
+     handle_arm_acle_h ();
+ }
+@@ -3137,6 +3145,16 @@ aarch64_general_expand_builtin (unsigned int fcode, tree exp, rtx target,
+     case AARCH64_PLIX:
+       aarch64_expand_prefetch_builtin (exp, fcode);
+       return target;
++
++    case AARCH64_BUILTIN_CHKFEAT:
++      {
++	rtx x16_reg = gen_rtx_REG (DImode, R16_REGNUM);
++	op0 = expand_normal (CALL_EXPR_ARG (exp, 0));
++	emit_move_insn (x16_reg, op0);
++	expand_insn (CODE_FOR_aarch64_chkfeat, 0, 0);
++	emit_move_insn (target, x16_reg);
++	return target;
++      }
+     }
+ 
+   if (fcode >= AARCH64_SIMD_BUILTIN_BASE && fcode <= AARCH64_SIMD_BUILTIN_MAX)
+-- 
+2.34.1
+
+
+From fd2868c17ad14374147adc83d62ef24b60718509 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 2 Jun 2023 16:15:25 +0100
+Subject: [PATCH 06/19] aarch64: Add __builtin_aarch64_chkfeat tests
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/chkfeat-1.c: New test.
+	* gcc.target/aarch64/chkfeat-2.c: New test.
+---
+ gcc/testsuite/gcc.target/aarch64/chkfeat-1.c | 75 ++++++++++++++++++++
+ gcc/testsuite/gcc.target/aarch64/chkfeat-2.c | 15 ++++
+ 2 files changed, 90 insertions(+)
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/chkfeat-1.c
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/chkfeat-2.c
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/chkfeat-1.c b/gcc/testsuite/gcc.target/aarch64/chkfeat-1.c
+new file mode 100644
+index 00000000000..2fae81e740f
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/chkfeat-1.c
+@@ -0,0 +1,75 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=none" } */
++/* { dg-final { check-function-bodies "**" "" "" } } */
++
++/*
++**foo1:
++**	mov	x16, 1
++**	hint	40 // chkfeat x16
++**	mov	x0, x16
++**	ret
++*/
++unsigned long long
++foo1 (void)
++{
++  return __builtin_aarch64_chkfeat (1);
++}
++
++/*
++**foo2:
++**	mov	x16, 1
++**	movk	x16, 0x5678, lsl 32
++**	movk	x16, 0x1234, lsl 48
++**	hint	40 // chkfeat x16
++**	mov	x0, x16
++**	ret
++*/
++unsigned long long
++foo2 (void)
++{
++  return __builtin_aarch64_chkfeat (0x1234567800000001);
++}
++
++/*
++**foo3:
++**	mov	x16, x0
++**	hint	40 // chkfeat x16
++**	mov	x0, x16
++**	ret
++*/
++unsigned long long
++foo3 (unsigned long long x)
++{
++  return __builtin_aarch64_chkfeat (x);
++}
++
++/*
++**foo4:
++**	ldr	x16, \[x0\]
++**	hint	40 // chkfeat x16
++**	str	x16, \[x0\]
++**	ret
++*/
++void
++foo4 (unsigned long long *p)
++{
++  *p = __builtin_aarch64_chkfeat (*p);
++}
++
++/*
++**foo5:
++**	mov	x16, 1
++**	hint	40 // chkfeat x16
++**	cmp	x16, 0
++**(
++**	csel	w0, w1, w0, eq
++**|
++**	csel	w0, w0, w1, ne
++**)
++**	ret
++*/
++int
++foo5 (int x, int y)
++{
++  return __builtin_aarch64_chkfeat (1) ? x : y;
++}
+diff --git a/gcc/testsuite/gcc.target/aarch64/chkfeat-2.c b/gcc/testsuite/gcc.target/aarch64/chkfeat-2.c
+new file mode 100644
+index 00000000000..682524e244f
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/chkfeat-2.c
+@@ -0,0 +1,15 @@
++/* { dg-do compile } */
++/* { dg-options "-O2" } */
++/* { dg-final { scan-assembler-times {hint\t40 // chkfeat x16} 2 } } */
++
++void bar (void);
++
++/* Extern call may change enabled HW features.  */
++unsigned long long
++foo (void)
++{
++  unsigned long long a = __builtin_aarch64_chkfeat (1);
++  bar ();
++  unsigned long long b = __builtin_aarch64_chkfeat (1);
++  return a + b;
++}
+-- 
+2.34.1
+
+
+From 409aac824e3a69848a60daafcaeedc5f18c357dd Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 16:00:01 +0100
+Subject: [PATCH 07/19] aarch64: Add GCS instructions
+
+Add instructions for the Guarded Control Stack extension.
+
+GCSSS1 and GCSSS2 are modelled as a single GCSSS unspec, because they
+are always used together in the compiler.
+
+Before GCSPOPM and GCSSS2 an extra "mov xn, 0" is added to clear the
+output register, this is needed to get reasonable result when GCS is
+disabled, when the instructions are NOPs. Since the instructions are
+expecetd to be used behind runtime feature checks, this is mainly
+relevant if GCS can be disabled asynchronously.
+
+The output of GCSPOPM is usually not needed, so a separate gcspopm_xzr
+was added to model that. Did not do the same for GCSSS as it is a less
+common operation.
+
+The used mnemonics do not depend on updated assembler since these
+instructions can be used without new -march setting behind a runtime
+check.
+
+Reading the GCSPR is modelled as unspec_volatile so it does not get
+reordered wrt the other instructions changing the GCSPR.
+
+TODO:
+- Do we care about async disable?
+- Do we need GCSSS_xzr? (to avoid the mov x,0)
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64.md (aarch64_load_gcspr): New.
+	(aarch64_gcspopm): New.
+	(aarch64_gcspopm_xzr): New.
+	(aarch64_gcsss): New.
+---
+ gcc/config/aarch64/aarch64.md | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64.md b/gcc/config/aarch64/aarch64.md
+index a20462303b5..8defd6e0582 100644
+--- a/gcc/config/aarch64/aarch64.md
++++ b/gcc/config/aarch64/aarch64.md
+@@ -379,6 +379,9 @@
+     UNSPECV_BTI_J		; Represent BTI j.
+     UNSPECV_BTI_JC		; Represent BTI jc.
+     UNSPECV_CHKFEAT		; Represent CHKFEAT X16.
++    UNSPECV_GCSPR		; Represent MRS Xn, GCSPR_EL0
++    UNSPECV_GCSPOPM		; Represent GCSPOPM.
++    UNSPECV_GCSSS		; Represent GCSSS1 and GCSSS2.
+     UNSPECV_TSTART		; Represent transaction start.
+     UNSPECV_TCOMMIT		; Represent transaction commit.
+     UNSPECV_TCANCEL		; Represent transaction cancel.
+@@ -8267,6 +8270,38 @@
+   "hint\\t40 // chkfeat x16"
+ )
+ 
++;; Guarded Control Stack (GCS) instructions
++(define_insn "aarch64_load_gcspr"
++  [(set (match_operand:DI 0 "register_operand" "=r")
++	(unspec_volatile:DI [(const_int 0)] UNSPECV_GCSPR))]
++  ""
++  "mrs\\t%0, s3_3_c2_c5_1 // gcspr_el0"
++  [(set_attr "type" "mrs")]
++)
++
++(define_insn "aarch64_gcspopm"
++  [(set (match_operand:DI 0 "register_operand" "=r")
++	(unspec_volatile:DI [(const_int 0)] UNSPECV_GCSPOPM))]
++  ""
++  "mov\\t%0, 0\;sysl\\t%0, #3, c7, c7, #1 // gcspopm"
++  [(set_attr "length" "8")]
++)
++
++(define_insn "aarch64_gcspopm_xzr"
++  [(unspec_volatile [(const_int 0)] UNSPECV_GCSPOPM)]
++  ""
++  "sysl\\txzr, #3, c7, c7, #1 // gcspopm"
++)
++
++(define_insn "aarch64_gcsss"
++  [(set (match_operand:DI 0 "register_operand" "=r")
++	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "r")]
++	  UNSPECV_GCSSS))]
++  ""
++  "sys\\t#3, c7, c7, #2, %1 // gcsss1\;mov\\t%0, 0\;sysl\\t%0, #3, c7, c7, #3 // gcsss2"
++  [(set_attr "length" "12")]
++)
++
+ ;; AdvSIMD Stuff
+ (include "aarch64-simd.md")
+ 
+-- 
+2.34.1
+
+
+From 9e6a37fd99e22e3cd3d685100763c9ed201019ee Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 16:21:28 +0100
+Subject: [PATCH 08/19] aarch64: Add GCS builtins
+
+Add new builtins for GCS:
+
+  void *__builtin_aarch64_gcspr (void)
+  uint64_t __builtin_aarch64_gcspopm (void)
+  void *__builtin_aarch64_gcsss (void *)
+
+The builtins are always enabled, but should be used behind runtime
+checks in case the target does not support GCS. They are thin
+wrappers around the corresponding instructions.
+
+The GCS pointer is modelled with void * type (normal stores do not
+work on GCS memory, but it is writable via the gcsss operation or
+via GCSSTR if enabled so not const) and an entry on the GCS is
+modelled with uint64_t (since it has fixed size and can be a token
+that's not a pointer).
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64-builtins.cc (enum aarch64_builtins): Add
+	AARCH64_BUILTIN_GCSPR, AARCH64_BUILTIN_GCSPOPM, AARCH64_BUILTIN_GCSSS.
+	(aarch64_init_gcs_builtins): New.
+	(aarch64_general_init_builtins): Call aarch64_init_gcs_builtins.
+	(aarch64_expand_gcs_builtin): New.
+	(aarch64_general_expand_builtin): Call aarch64_expand_gcs_builtin.
+---
+ gcc/config/aarch64/aarch64-builtins.cc | 70 ++++++++++++++++++++++++++
+ 1 file changed, 70 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64-builtins.cc b/gcc/config/aarch64/aarch64-builtins.cc
+index 1c08f56ab6b..30c977586f9 100644
+--- a/gcc/config/aarch64/aarch64-builtins.cc
++++ b/gcc/config/aarch64/aarch64-builtins.cc
+@@ -790,6 +790,9 @@ enum aarch64_builtins
+   AARCH64_PLIX,
+   /* Armv8.9-A / Armv9.4-A builtins.  */
+   AARCH64_BUILTIN_CHKFEAT,
++  AARCH64_BUILTIN_GCSPR,
++  AARCH64_BUILTIN_GCSPOPM,
++  AARCH64_BUILTIN_GCSSS,
+   AARCH64_BUILTIN_MAX
+ };
+ 
+@@ -2041,6 +2044,29 @@ aarch64_init_fpsr_fpcr_builtins (void)
+ 				   AARCH64_BUILTIN_SET_FPSR64);
+ }
+ 
++/* Add builtins for Guarded Control Stack instructions.  */
++
++static void
++aarch64_init_gcs_builtins (void)
++{
++  tree ftype;
++
++  ftype = build_function_type_list (ptr_type_node, NULL);
++  aarch64_builtin_decls[AARCH64_BUILTIN_GCSPR]
++    = aarch64_general_add_builtin ("__builtin_aarch64_gcspr", ftype,
++				   AARCH64_BUILTIN_GCSPR);
++
++  ftype = build_function_type_list (uint64_type_node, NULL);
++  aarch64_builtin_decls[AARCH64_BUILTIN_GCSPOPM]
++    = aarch64_general_add_builtin ("__builtin_aarch64_gcspopm", ftype,
++				   AARCH64_BUILTIN_GCSPOPM);
++
++  ftype = build_function_type_list (ptr_type_node, ptr_type_node, NULL);
++  aarch64_builtin_decls[AARCH64_BUILTIN_GCSSS]
++    = aarch64_general_add_builtin ("__builtin_aarch64_gcsss", ftype,
++				   AARCH64_BUILTIN_GCSSS);
++}
++
+ /* Initialize all builtins in the AARCH64_BUILTIN_GENERAL group.  */
+ 
+ void
+@@ -2092,6 +2118,8 @@ aarch64_general_init_builtins (void)
+     = aarch64_general_add_builtin ("__builtin_aarch64_chkfeat", ftype_chkfeat,
+ 				   AARCH64_BUILTIN_CHKFEAT);
+ 
++  aarch64_init_gcs_builtins ();
++
+   if (in_lto_p)
+     handle_arm_acle_h ();
+ }
+@@ -3020,6 +3048,43 @@ aarch64_expand_fpsr_fpcr_getter (enum insn_code icode, machine_mode mode,
+   return op.value;
+ }
+ 
++/* Expand GCS builtin EXP with code FCODE, putting the result
++   int TARGET.  If IGNORE is true the return value is ignored.  */
++
++rtx
++aarch64_expand_gcs_builtin (tree exp, rtx target, int fcode, int ignore)
++{
++  if (fcode == AARCH64_BUILTIN_GCSPR)
++    {
++      expand_operand op;
++      create_output_operand (&op, target, DImode);
++      expand_insn (CODE_FOR_aarch64_load_gcspr, 1, &op);
++      return op.value;
++    }
++  if (fcode == AARCH64_BUILTIN_GCSPOPM && ignore)
++    {
++      expand_insn (CODE_FOR_aarch64_gcspopm_xzr, 0, 0);
++      return target;
++    }
++  if (fcode == AARCH64_BUILTIN_GCSPOPM)
++    {
++      expand_operand op;
++      create_output_operand (&op, target, Pmode);
++      expand_insn (CODE_FOR_aarch64_gcspopm, 1, &op);
++      return op.value;
++    }
++  if (fcode == AARCH64_BUILTIN_GCSSS)
++    {
++      expand_operand ops[2];
++      rtx op1 = expand_normal (CALL_EXPR_ARG (exp, 0));
++      create_output_operand (&ops[0], target, Pmode);
++      create_input_operand (&ops[1], op1, Pmode);
++      expand_insn (CODE_FOR_aarch64_gcsss, 2, ops);
++      return ops[0].value;
++    }
++  gcc_unreachable ();
++}
++
+ /* Expand an expression EXP that calls built-in function FCODE,
+    with result going to TARGET if that's convenient.  IGNORE is true
+    if the result of the builtin is ignored.  */
+@@ -3155,6 +3220,11 @@ aarch64_general_expand_builtin (unsigned int fcode, tree exp, rtx target,
+ 	emit_move_insn (target, x16_reg);
+ 	return target;
+       }
++
++    case AARCH64_BUILTIN_GCSPR:
++    case AARCH64_BUILTIN_GCSPOPM:
++    case AARCH64_BUILTIN_GCSSS:
++      return aarch64_expand_gcs_builtin (exp, target, fcode, ignore);
+     }
+ 
+   if (fcode >= AARCH64_SIMD_BUILTIN_BASE && fcode <= AARCH64_SIMD_BUILTIN_MAX)
+-- 
+2.34.1
+
+
+From d4d950feefc4f55da32be812eb882a2f66aadcaf Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 6 Jun 2023 17:35:51 +0100
+Subject: [PATCH 09/19] aarch64: Add __builtin_aarch64_gcs* tests
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/gcspopm-1.c: New test.
+	* gcc.target/aarch64/gcspr-1.c: New test.
+	* gcc.target/aarch64/gcsss-1.c: New test.
+---
+ gcc/testsuite/gcc.target/aarch64/gcspopm-1.c | 69 ++++++++++++++++++++
+ gcc/testsuite/gcc.target/aarch64/gcspr-1.c   | 31 +++++++++
+ gcc/testsuite/gcc.target/aarch64/gcsss-1.c   | 49 ++++++++++++++
+ 3 files changed, 149 insertions(+)
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/gcspopm-1.c
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/gcspr-1.c
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/gcsss-1.c
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/gcspopm-1.c b/gcc/testsuite/gcc.target/aarch64/gcspopm-1.c
+new file mode 100644
+index 00000000000..6e6add39cf7
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/gcspopm-1.c
+@@ -0,0 +1,69 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=none" } */
++/* { dg-final { check-function-bodies "**" "" "" } } */
++
++/*
++**foo1:
++**	sysl	xzr, #3, c7, c7, #1 // gcspopm
++**	ret
++*/
++void
++foo1 (void)
++{
++  __builtin_aarch64_gcspopm ();
++}
++
++/*
++**foo2:
++**	mov	x0, 0
++**	sysl	x0, #3, c7, c7, #1 // gcspopm
++**	ret
++*/
++unsigned long long
++foo2 (void)
++{
++  return __builtin_aarch64_gcspopm ();
++}
++
++/*
++**foo3:
++**	mov	x16, 1
++** (
++**	mov	x0, 0
++**	hint	40 // chkfeat x16
++** |
++**	hint	40 // chkfeat x16
++**	mov	x0, 0
++** )
++**	cbz	x16, .*
++**	ret
++**	mov	x0, 0
++**	sysl	x0, #3, c7, c7, #1 // gcspopm
++**	ret
++*/
++unsigned long long
++foo3 (void)
++{
++  if (__builtin_aarch64_chkfeat (1) == 0)
++    return __builtin_aarch64_gcspopm ();
++  return 0;
++}
++
++/*
++**foo4:
++**	sysl	xzr, #3, c7, c7, #1 // gcspopm
++**	mov	x0, 0
++**	sysl	x0, #3, c7, c7, #1 // gcspopm
++**	sysl	xzr, #3, c7, c7, #1 // gcspopm
++**	ret
++*/
++unsigned long long
++foo4 (void)
++{
++  unsigned long long a = __builtin_aarch64_gcspopm ();
++  unsigned long long b = __builtin_aarch64_gcspopm ();
++  unsigned long long c = __builtin_aarch64_gcspopm ();
++  (void) a;
++  (void) c;
++  return b;
++}
+diff --git a/gcc/testsuite/gcc.target/aarch64/gcspr-1.c b/gcc/testsuite/gcc.target/aarch64/gcspr-1.c
+new file mode 100644
+index 00000000000..0e651979551
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/gcspr-1.c
+@@ -0,0 +1,31 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=none" } */
++/* { dg-final { check-function-bodies "**" "" "" } } */
++
++/*
++**foo1:
++**	mrs	x0, s3_3_c2_c5_1 // gcspr_el0
++**	ret
++*/
++void *
++foo1 (void)
++{
++  return __builtin_aarch64_gcspr ();
++}
++
++/*
++**foo2:
++**	mrs	x[0-9]*, s3_3_c2_c5_1 // gcspr_el0
++**	sysl	xzr, #3, c7, c7, #1 // gcspopm
++**	mrs	x[0-9]*, s3_3_c2_c5_1 // gcspr_el0
++**	sub	x0, x[0-9]*, x[0-9]*
++**	ret
++*/
++long
++foo2 (void)
++{
++  const char *p = __builtin_aarch64_gcspr ();
++  __builtin_aarch64_gcspopm ();
++  const char *q = __builtin_aarch64_gcspr ();
++  return p - q;
++}
+diff --git a/gcc/testsuite/gcc.target/aarch64/gcsss-1.c b/gcc/testsuite/gcc.target/aarch64/gcsss-1.c
+new file mode 100644
+index 00000000000..025c7fee647
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/gcsss-1.c
+@@ -0,0 +1,49 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=none" } */
++/* { dg-final { check-function-bodies "**" "" "" } } */
++
++/*
++**foo1:
++**	sys	#3, c7, c7, #2, x0 // gcsss1
++**	mov	x[0-9]*, 0
++**	sysl	x[0-9]*, #3, c7, c7, #3 // gcsss2
++**	ret
++*/
++void
++foo1 (void *p)
++{
++  __builtin_aarch64_gcsss (p);
++}
++
++/*
++**foo2:
++**	sys	#3, c7, c7, #2, x0 // gcsss1
++**	mov	x0, 0
++**	sysl	x0, #3, c7, c7, #3 // gcsss2
++**	ret
++*/
++void *
++foo2 (void *p)
++{
++  return __builtin_aarch64_gcsss (p);
++}
++
++/*
++**foo3:
++**	mov	x16, 1
++**	hint	40 // chkfeat x16
++**	cbnz	x16, .*
++**	sys	#3, c7, c7, #2, x0 // gcsss1
++**	mov	x0, 0
++**	sysl	x0, #3, c7, c7, #3 // gcsss2
++**	ret
++**	mov	x0, 0
++**	ret
++*/
++void *
++foo3 (void *p)
++{
++  if (__builtin_aarch64_chkfeat (1) == 0)
++    return __builtin_aarch64_gcsss (p);
++  return 0;
++}
+-- 
+2.34.1
+
+
+From 57b7b8934997cbd3eceb84b8de30b83f05760ecc Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 14 Apr 2023 18:23:52 +0100
+Subject: [PATCH 10/19] aarch64: Add GCS support for nonlocal stack save
+
+Nonlocal stack save and restore has to also save and restore the GCS
+pointer. This is used in __builtin_setjmp/longjmp and nonlocal goto.
+
+The GCS specific code is only emitted if GCS branch-protection is
+enabled and the code always checks at runtime if GCS is enabled.
+
+The new -mbranch-protection=gcs and old -mbranch-protection=none code
+are ABI compatible: jmpbuf for __builtin_setjmp has space for 5
+pointers, the layout is
+
+  old layout: fp, pc, sp, unused, unused
+  new layout: fp, pc, sp, gcsp, unused
+
+Note: the ILP32 code generation is wrong as it saves the pointers with
+Pmode (i.e. 8 bytes per pointer), but the user supplied buffer size is
+for 5 pointers (4 bytes per pointer), this is not fixed.
+
+The nonlocal goto has no ABI compatibility issues as the goto and its
+destination are in the same translation unit.
+
+TODO:
+- can we simplify the define_expand rtls?
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64.h (STACK_SAVEAREA_MODE): Make space for gcs.
+	* config/aarch64/aarch64.md (save_stack_nonlocal): New.
+	(restore_stack_nonlocal): New.
+---
+ gcc/config/aarch64/aarch64.h  |  7 +++
+ gcc/config/aarch64/aarch64.md | 82 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 89 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64.h b/gcc/config/aarch64/aarch64.h
+index 45e901cda64..3238452f53f 100644
+--- a/gcc/config/aarch64/aarch64.h
++++ b/gcc/config/aarch64/aarch64.h
+@@ -1294,6 +1294,13 @@ typedef struct
+ #define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
+   ((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), 2)
+ 
++/* Have space for both SP and GCSPR in the NONLOCAL case in
++   emit_stack_save as well as in __builtin_setjmp, __builtin_longjmp
++   and __builtin_nonlocal_goto.
++   Note: On ILP32 the documented buf size is not enough PR84150.  */
++#define STACK_SAVEAREA_MODE(LEVEL)			\
++  ((LEVEL) == SAVE_NONLOCAL ? TImode : Pmode)
++
+ #define INCOMING_RETURN_ADDR_RTX gen_rtx_REG (Pmode, LR_REGNUM)
+ 
+ #define RETURN_ADDR_RTX aarch64_return_addr
+diff --git a/gcc/config/aarch64/aarch64.md b/gcc/config/aarch64/aarch64.md
+index 8defd6e0582..2d36af12cfb 100644
+--- a/gcc/config/aarch64/aarch64.md
++++ b/gcc/config/aarch64/aarch64.md
+@@ -1183,6 +1183,88 @@
+ 		      (const_int 1)))]
+ )
+ 
++(define_expand "save_stack_nonlocal"
++  [(set (match_operand 0 "memory_operand")
++        (match_operand 1 "register_operand"))]
++  ""
++{
++  rtx stack_slot = adjust_address (operands[0], Pmode, 0);
++  emit_move_insn (stack_slot, operands[1]);
++
++  if (aarch64_gcs_enabled ())
++    {
++      /* Save GCS with code like
++		mov     x16, 1
++		chkfeat x16
++		tbnz    x16, 0, .L_done
++		mrs     tmp, gcspr_el0
++		str     tmp, [%0, 8]
++	.L_done:  */
++
++      rtx done_label = gen_label_rtx ();
++      rtx r16 = gen_rtx_REG (DImode, R16_REGNUM);
++      emit_move_insn (r16, const1_rtx);
++      emit_insn (gen_aarch64_chkfeat ());
++      emit_insn (gen_tbranch_neqi3 (r16, const0_rtx, done_label));
++      rtx gcs_slot = adjust_address (operands[0], Pmode, GET_MODE_SIZE (Pmode));
++      rtx gcs = force_reg (Pmode, const0_rtx);
++      emit_insn (gen_aarch64_load_gcspr (gcs));
++      emit_move_insn (gcs_slot, gcs);
++      emit_label (done_label);
++    }
++  DONE;
++})
++
++(define_expand "restore_stack_nonlocal"
++  [(set (match_operand 0 "register_operand" "")
++	(match_operand 1 "memory_operand" ""))]
++  ""
++{
++  rtx stack_slot = adjust_address (operands[1], Pmode, 0);
++  emit_move_insn (operands[0], stack_slot);
++
++  if (aarch64_gcs_enabled ())
++    {
++      /* Restore GCS with code like
++		mov     x16, 1
++		chkfeat x16
++		tbnz    x16, 0, .L_done
++		ldr     tmp1, [%1, 8]
++		mrs     tmp2, gcspr_el0
++		subs    tmp2, tmp1, tmp2
++		b.eq    .L_done
++	.L_loop:
++		gcspopm
++		subs    tmp2, tmp2, 8
++		b.ne    .L_loop
++	.L_done:  */
++
++      rtx loop_label = gen_label_rtx ();
++      rtx done_label = gen_label_rtx ();
++      rtx r16 = gen_rtx_REG (DImode, R16_REGNUM);
++      emit_move_insn (r16, const1_rtx);
++      emit_insn (gen_aarch64_chkfeat ());
++      emit_insn (gen_tbranch_neqi3 (r16, const0_rtx, done_label));
++      rtx gcs_slot = adjust_address (operands[1], Pmode, GET_MODE_SIZE (Pmode));
++      rtx gcs_old = force_reg (Pmode, const0_rtx);
++      emit_move_insn (gcs_old, gcs_slot);
++      rtx gcs_now = force_reg (Pmode, const0_rtx);
++      emit_insn (gen_aarch64_load_gcspr (gcs_now));
++      emit_insn (gen_subdi3_compare1 (gcs_now, gcs_old, gcs_now));
++      rtx cc_reg = gen_rtx_REG (CC_NZmode, CC_REGNUM);
++      rtx cmp_rtx = gen_rtx_fmt_ee (EQ, DImode, cc_reg, const0_rtx);
++      emit_jump_insn (gen_condjump (cmp_rtx, cc_reg, done_label));
++      emit_label (loop_label);
++      emit_insn (gen_aarch64_gcspopm_xzr ());
++      emit_insn (gen_adddi3_compare0 (gcs_now, gcs_now, GEN_INT (-8)));
++      cc_reg = gen_rtx_REG (CC_NZmode, CC_REGNUM);
++      cmp_rtx = gen_rtx_fmt_ee (NE, DImode, cc_reg, const0_rtx);
++      emit_jump_insn (gen_condjump (cmp_rtx, cc_reg, loop_label));
++      emit_label (done_label);
++    }
++  DONE;
++})
++
+ ;; -------------------------------------------------------------------
+ ;; Subroutine calls and sibcalls
+ ;; -------------------------------------------------------------------
+-- 
+2.34.1
+
+
+From 44b1847be5f2a53727a4a64f2d895b1c1d65e460 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 7 Jun 2023 10:58:06 +0100
+Subject: [PATCH 11/19] aarch64: Add non-local goto and jump tests for GCS
+
+These are scan asm tests only, relying on existing execution tests
+for runtime coverage.
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/gcs-nonlocal-1.c: New test.
+	* gcc.target/aarch64/gcs-nonlocal-2.c: New test.
+---
+ .../gcc.target/aarch64/gcs-nonlocal-1.c       | 25 +++++++++++++++++++
+ .../gcc.target/aarch64/gcs-nonlocal-2.c       | 21 ++++++++++++++++
+ 2 files changed, 46 insertions(+)
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-1.c
+ create mode 100644 gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-2.c
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-1.c b/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-1.c
+new file mode 100644
+index 00000000000..821fab816f9
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-1.c
+@@ -0,0 +1,25 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=gcs" } */
++/* { dg-final { scan-assembler-times "hint\\t40 // chkfeat x16" 2 } } */
++/* { dg-final { scan-assembler-times "mrs\\tx\[0-9\]+, s3_3_c2_c5_1 // gcspr_el0" 2 } } */
++/* { dg-final { scan-assembler-times "sysl\\txzr, #3, c7, c7, #1 // gcspopm" 1 } } */
++
++int bar1 (int);
++int bar2 (int);
++
++void foo (int cmd)
++{
++  __label__ start;
++  int x = 0;
++
++  void nonlocal_goto (void)
++  {
++    x++;
++    goto start;
++  }
++
++start:
++  while (bar1 (x))
++    if (bar2 (x))
++      nonlocal_goto ();
++}
+diff --git a/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-2.c b/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-2.c
+new file mode 100644
+index 00000000000..63dbce36e1e
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/aarch64/gcs-nonlocal-2.c
+@@ -0,0 +1,21 @@
++/* { dg-do compile } */
++/* { dg-options "-O2 -mbranch-protection=gcs" } */
++/* { dg-final { scan-assembler-times "hint\\t40 // chkfeat x16" 2 } } */
++/* { dg-final { scan-assembler-times "mrs\\tx\[0-9\]+, s3_3_c2_c5_1 // gcspr_el0" 2 } } */
++/* { dg-final { scan-assembler-times "sysl\\txzr, #3, c7, c7, #1 // gcspopm" 1 } } */
++
++void longj (void *buf)
++{
++  __builtin_longjmp (buf, 1);
++}
++
++void foo (void);
++void bar (void);
++
++void setj (void *buf)
++{
++  if (__builtin_setjmp (buf))
++    foo ();
++  else
++    bar ();
++}
+-- 
+2.34.1
+
+
+From a9ec10c065ac9d932e30de54d68363f30ed864fe Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 17:04:34 +0100
+Subject: [PATCH 12/19] aarch64: Add ACLE feature macros for GCS
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64-c.cc (aarch64_update_cpp_builtins): Define
+	macros for GCS.
+---
+ gcc/config/aarch64/aarch64-c.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64-c.cc b/gcc/config/aarch64/aarch64-c.cc
+index b5a6917d06d..132d5c86413 100644
+--- a/gcc/config/aarch64/aarch64-c.cc
++++ b/gcc/config/aarch64/aarch64-c.cc
+@@ -246,6 +246,9 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
+ 
+   aarch64_def_or_undef (TARGET_PAUTH, "__ARM_FEATURE_PAUTH", pfile);
+   aarch64_def_or_undef (TARGET_BTI, "__ARM_FEATURE_BTI", pfile);
++  aarch64_def_or_undef (aarch64_gcs_enabled (),
++			"__ARM_FEATURE_GCS_DEFAULT", pfile);
++  aarch64_def_or_undef (TARGET_GCS, "__ARM_FEATURE_GCS", pfile);
+   aarch64_def_or_undef (TARGET_I8MM, "__ARM_FEATURE_MATMUL_INT8", pfile);
+   aarch64_def_or_undef (TARGET_BF16_SIMD,
+ 			"__ARM_FEATURE_BF16_VECTOR_ARITHMETIC", pfile);
+-- 
+2.34.1
+
+
+From ff3d447772dcf9b2c7293a6b1ac458898a493cdf Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 7 Jun 2023 16:17:53 +0100
+Subject: [PATCH 13/19] aarch64: Add test for GCS ACLE defs
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/aarch64/pragma_cpp_predefs_1.c: GCS test.
+---
+ .../gcc.target/aarch64/pragma_cpp_predefs_1.c | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_1.c b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_1.c
+index 307fa3d67da..6122cd55d66 100644
+--- a/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_1.c
++++ b/gcc/testsuite/gcc.target/aarch64/pragma_cpp_predefs_1.c
+@@ -268,6 +268,36 @@
+ #error "__ARM_FEATURE_RCPC is not defined but should be!"
+ #endif
+ 
++#pragma GCC target ("arch=armv8.8-a+gcs")
++#ifndef __ARM_FEATURE_GCS
++#error "__ARM_FEATURE_GCS is not defined but should be!"
++#endif
++
++#pragma GCC target ("arch=armv8.8-a+nogcs")
++#ifdef __ARM_FEATURE_GCS
++#error "__ARM_FEATURE_GCS is defined but should not be!"
++#endif
++
++#pragma GCC target ("arch=armv8.8-a")
++#ifdef __ARM_FEATURE_GCS
++#error "__ARM_FEATURE_GCS is defined but should not be!"
++#endif
++
++#pragma GCC target ("branch-protection=gcs")
++#ifndef __ARM_FEATURE_GCS_DEFAULT
++#error "__ARM_FEATURE_GCS_DEFAULT is not defined but should be!"
++#endif
++
++#pragma GCC target ("branch-protection=none")
++#ifdef __ARM_FEATURE_GCS_DEFAULT
++#error "__ARM_FEATURE_GCS_DEFAULT is defined but should not be!"
++#endif
++
++#pragma GCC target ("branch-protection=standard")
++#ifndef __ARM_FEATURE_GCS_DEFAULT
++#error "__ARM_FEATURE_GCS_DEFAULT is not defined but should be!"
++#endif
++
+ int
+ foo (int a)
+ {
+-- 
+2.34.1
+
+
+From 8187d08bc815c5d45fa5b7cc6a970811ca4c6efe Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 19 Apr 2023 14:01:36 +0100
+Subject: [PATCH 14/19] aarch64: Add GCS support to the unwinder
+
+TODO:
+- Follows the current linux ABI that uses single signal entry token
+  and shared shadow stack between thread and alt stack.
+- Could be behind __ARM_FEATURE_GCS_DEFAULT ifdef (only do anything
+  special with gcs compat codegen) but there is a runtime check anyway.
+
+libgcc/ChangeLog:
+
+	* config/aarch64/aarch64-unwind.h (_Unwind_Frames_Extra): Update.
+	(_Unwind_Frames_Increment): Define.
+---
+ libgcc/config/aarch64/aarch64-unwind.h | 59 +++++++++++++++++++++++++-
+ 1 file changed, 58 insertions(+), 1 deletion(-)
+
+diff --git a/libgcc/config/aarch64/aarch64-unwind.h b/libgcc/config/aarch64/aarch64-unwind.h
+index daf96624b5e..c22a3fc20d2 100644
+--- a/libgcc/config/aarch64/aarch64-unwind.h
++++ b/libgcc/config/aarch64/aarch64-unwind.h
+@@ -78,6 +78,9 @@ aarch64_demangle_return_addr (struct _Unwind_Context *context,
+   return addr;
+ }
+ 
++/* GCS enable flag for chkfeat instruction.  */
++#define CHKFEAT_GCS 1
++
+ /* SME runtime function local to libgcc, streaming compatible
+    and preserves more registers than the base PCS requires, but
+    we don't rely on that here.  */
+@@ -85,12 +88,66 @@ __attribute__ ((visibility ("hidden")))
+ void __libgcc_arm_za_disable (void);
+ 
+ /* Disable the SME ZA state in case an unwound frame used the ZA
+-   lazy saving scheme.  */
++   lazy saving scheme. And unwind the GCS for EH.  */
+ #undef _Unwind_Frames_Extra
+ #define _Unwind_Frames_Extra(x)				\
+   do							\
+     {							\
+       __libgcc_arm_za_disable ();			\
++      if (__builtin_aarch64_chkfeat (CHKFEAT_GCS) == 0)	\
++	{						\
++	  for (_Unwind_Word n = (x); n != 0; n--)	\
++	    __builtin_aarch64_gcspopm ();		\
++	}						\
++    }							\
++  while (0)
++
++/* On signal entry the OS places a token on the GCS that can be used to
++   verify the integrity of the GCS pointer on signal return.  It also
++   places the signal handler return address (the restorer that calls the
++   signal return syscall) on the GCS so the handler can return.
++   Because of this token, each stack frame visited during unwinding has
++   exactly one corresponding entry on the GCS, so the frame count is
++   the number of entries that will have to be popped at EH return time.
++
++   Note: This depends on the GCS signal ABI of the OS.
++
++   When unwinding across a stack frame for each frame the corresponding
++   entry is checked on the GCS against the computed return address from
++   the normal stack.  If they don't match then _URC_FATAL_PHASE2_ERROR
++   is returned.  This check is omitted if
++
++   1. GCS is disabled. Note: asynchronous GCS disable is supported here
++      if GCSPR and the GCS remains readable.
++   2. Non-catchable exception where exception_class == 0.  Note: the
++      pthread cancellation implementation in glibc sets exception_class
++      to 0 when the unwinder is used for cancellation cleanup handling,
++      so this allows the GCS to get out of sync during cancellation.
++      This weakens security but avoids an ABI break in glibc.
++   3. Zero return address which marks the outermost stack frame.
++   4. Signal stack frame, the GCS entry is an OS specific token then
++      with the top bit set.
++ */
++#undef _Unwind_Frames_Increment
++#define _Unwind_Frames_Increment(exc, context, frames)	\
++  do							\
++    {							\
++      frames++;						\
++      if (__builtin_aarch64_chkfeat (CHKFEAT_GCS) != 0	\
++	  || exc->exception_class == 0			\
++	  || _Unwind_GetIP (context) == 0)		\
++	break;						\
++      const _Unwind_Word *gcs = __builtin_aarch64_gcspr (); \
++      if (_Unwind_IsSignalFrame (context))		\
++	{						\
++	  if (gcs[frames] >> 63 == 0)			\
++	    return _URC_FATAL_PHASE2_ERROR;		\
++	}						\
++      else						\
++	{						\
++	  if (gcs[frames] != _Unwind_GetIP (context))	\
++	    return _URC_FATAL_PHASE2_ERROR;		\
++	}						\
+     }							\
+   while (0)
+ 
+-- 
+2.34.1
+
+
+From f183fe2dd597f300b24151034d68d168401ab83e Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 9 May 2023 14:32:46 +0100
+Subject: [PATCH 15/19] aarch64: Emit GNU property NOTE for GCS
+
+TODO: relies on experimental binutils ABI, should use build attributes.
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64.cc (GNU_PROPERTY_AARCH64_FEATURE_1_GCS):
+	Define.
+	(aarch64_file_end_indicate_exec_stack): Set GCS property bit.
+---
+ gcc/config/aarch64/aarch64.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/gcc/config/aarch64/aarch64.cc b/gcc/config/aarch64/aarch64.cc
+index 73969721906..0119cfdd67b 100644
+--- a/gcc/config/aarch64/aarch64.cc
++++ b/gcc/config/aarch64/aarch64.cc
+@@ -28962,6 +28962,7 @@ aarch64_can_tag_addresses ()
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_AND	0xc0000000
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_PAC	(1U << 1)
++#define GNU_PROPERTY_AARCH64_FEATURE_1_GCS	(1U << 2)
+ void
+ aarch64_file_end_indicate_exec_stack ()
+ {
+@@ -28974,6 +28975,9 @@ aarch64_file_end_indicate_exec_stack ()
+   if (aarch_ra_sign_scope != AARCH_FUNCTION_NONE)
+     feature_1_and |= GNU_PROPERTY_AARCH64_FEATURE_1_PAC;
+ 
++  if (aarch64_gcs_enabled ())
++    feature_1_and |= GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
++
+   if (feature_1_and)
+     {
+       /* Generate .note.gnu.property section.  */
+@@ -29005,6 +29009,7 @@ aarch64_file_end_indicate_exec_stack ()
+       assemble_align (POINTER_SIZE);
+     }
+ }
++#undef GNU_PROPERTY_AARCH64_FEATURE_1_GCS
+ #undef GNU_PROPERTY_AARCH64_FEATURE_1_PAC
+ #undef GNU_PROPERTY_AARCH64_FEATURE_1_BTI
+ #undef GNU_PROPERTY_AARCH64_FEATURE_1_AND
+-- 
+2.34.1
+
+
+From 966dbf5b1816a49eebc7b9a52abe706e34ee67d3 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 22 Dec 2023 13:44:19 +0000
+Subject: [PATCH 16/19] aarch64: libgcc: add GCS marking to asm
+
+libgcc/ChangeLog:
+
+	* config/aarch64/aarch64-asm.h (FEATURE_1_GCS): Define.
+	(GCS_FLAG): Define if GCS is enabled.
+	(GNU_PROPERTY): Add GCS_FLAG.
+---
+ libgcc/config/aarch64/aarch64-asm.h | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/libgcc/config/aarch64/aarch64-asm.h b/libgcc/config/aarch64/aarch64-asm.h
+index 83c2e5944b3..86a9a0e662e 100644
+--- a/libgcc/config/aarch64/aarch64-asm.h
++++ b/libgcc/config/aarch64/aarch64-asm.h
+@@ -38,6 +38,7 @@
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+ #define FEATURE_1_PAC 2
++#define FEATURE_1_GCS 4
+ 
+ /* Supported features based on the code generation options.  */
+ #if defined(__ARM_FEATURE_BTI_DEFAULT)
+@@ -58,6 +59,12 @@
+ # define AUTIASP
+ #endif
+ 
++#if __ARM_FEATURE_GCS_DEFAULT
++# define GCS_FLAG FEATURE_1_GCS
++#else
++# define GCS_FLAG 0
++#endif
++
+ #ifdef __ELF__
+ #define HIDDEN(name) .hidden name
+ #define SYMBOL_SIZE(name) .size name, .-name
+@@ -88,8 +95,8 @@
+ .previous
+ 
+ /* Add GNU property note if built with branch protection.  */
+-# if (BTI_FLAG|PAC_FLAG) != 0
+-GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG)
++# if (BTI_FLAG|PAC_FLAG|GCS_FLAG) != 0
++GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG|GCS_FLAG)
+ # endif
+ #endif
+ 
+-- 
+2.34.1
+
+
+From bb609f49cbd69259513d9c39a74ad61730e3c87a Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 22 Dec 2023 15:11:25 +0000
+Subject: [PATCH 17/19] aarch64: libatomic: add GCS marking to asm
+
+libatomic/ChangeLog:
+
+	* config/linux/aarch64/atomic_16.S (FEATURE_1_GCS): Define.
+	(GCS_FLAG): Define if GCS is enabled.
+	(GNU_PROPERTY): Add GCS_FLAG.
+---
+ libatomic/config/linux/aarch64/atomic_16.S | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/libatomic/config/linux/aarch64/atomic_16.S b/libatomic/config/linux/aarch64/atomic_16.S
+index 4e3fa870b03..d6f34eee146 100644
+--- a/libatomic/config/linux/aarch64/atomic_16.S
++++ b/libatomic/config/linux/aarch64/atomic_16.S
+@@ -790,6 +790,7 @@ ALIAS2 (test_and_set_16)
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+ #define FEATURE_1_PAC 2
++#define FEATURE_1_GCS 4
+ 
+ /* Supported features based on the code generation options.  */
+ #if defined(__ARM_FEATURE_BTI_DEFAULT)
+@@ -804,6 +805,12 @@ ALIAS2 (test_and_set_16)
+ # define PAC_FLAG 0
+ #endif
+ 
++#if __ARM_FEATURE_GCS_DEFAULT
++# define GCS_FLAG FEATURE_1_GCS
++#else
++# define GCS_FLAG 0
++#endif
++
+ /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
+ #define GNU_PROPERTY(type, value)	\
+   .section .note.gnu.property, "a";     \
+@@ -821,7 +828,7 @@ ALIAS2 (test_and_set_16)
+ .section .note.GNU-stack, "", %progbits
+ 
+ /* Add GNU property note if built with branch protection.  */
+-# if (BTI_FLAG|PAC_FLAG) != 0
+-GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG)
++# if (BTI_FLAG|PAC_FLAG|GCS_FLAG) != 0
++GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG|GCS_FLAG)
+ # endif
+ #endif
+-- 
+2.34.1
+
+
+From 1d54b68e7c410b83fec17708ee84e7c64a461d3d Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 2 Apr 2024 15:43:23 +0100
+Subject: [PATCH 18/19] aarch64: libitm: Add GCS support
+
+Transaction begin and abort use setjmp/longjmp like operations that
+need to be updated for GCS compatibility. We use similar logic to
+libc setjmp/longjmp that support switching stack and thus switching
+GCS (e.g. due to longjmp out of a makecontext stack), this is kept
+even though it is likely not required for transaction aborts.
+
+The gtm_jmpbuf is internal to libitm so we can change its layout
+without breaking ABI.
+
+libitm/ChangeLog:
+
+	* config/aarch64/sjlj.S: Add GCS support and mark GCS compatible.
+	* config/aarch64/target.h: Add gcs field to gtm_jmpbuf.
+---
+ libitm/config/aarch64/sjlj.S   | 60 ++++++++++++++++++++++++++++++++--
+ libitm/config/aarch64/target.h |  1 +
+ 2 files changed, 58 insertions(+), 3 deletions(-)
+
+diff --git a/libitm/config/aarch64/sjlj.S b/libitm/config/aarch64/sjlj.S
+index 6b248f7c040..e21d751ef21 100644
+--- a/libitm/config/aarch64/sjlj.S
++++ b/libitm/config/aarch64/sjlj.S
+@@ -29,6 +29,13 @@
+ #define AUTIASP	hint	29
+ #define PACIBSP	hint	27
+ #define AUTIBSP	hint	31
++#define CHKFEAT_X16	hint	40
++#define MRS_GCSPR(x)	mrs	x, s3_3_c2_c5_1
++#define GCSPOPM(x)	sysl	x, #3, c7, c7, #1
++#define GCSSS1(x)	sys	#3, c7, c7, #2, x
++#define GCSSS2(x)	sysl	x, #3, c7, c7, #3
++
++#define L(name) .L##name
+ 
+ #if defined(HAVE_AS_CFI_PSEUDO_OP) && defined(__GCC_HAVE_DWARF2_CFI_ASM)
+ # define cfi_window_save .cfi_window_save
+@@ -80,7 +87,16 @@ _ITM_beginTransaction:
+ 	stp	d10, d11, [sp, 7*16]
+ 	stp	d12, d13, [sp, 8*16]
+ 	stp	d14, d15, [sp, 9*16]
+-	str	x1, [sp, 10*16]
++
++	/* GCS support.  */
++	mov	x2, 0
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done_sj)
++	MRS_GCSPR (x2)
++	add	x2, x2, 8 /* GCS after _ITM_beginTransaction returns.  */
++L(gcs_done_sj):
++	stp	x2, x1, [sp, 10*16]
+ 
+ 	/* Invoke GTM_begin_transaction with the struct we just built.  */
+ 	mov	x1, sp
+@@ -117,7 +133,38 @@ GTM_longjmp:
+ 	ldp	d10, d11, [x1, 7*16]
+ 	ldp	d12, d13, [x1, 8*16]
+ 	ldp	d14, d15, [x1, 9*16]
++
++	/* GCS support.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done_lj)
++	MRS_GCSPR (x7)
+ 	ldr	x3, [x1, 10*16]
++	mov	x4, x3
++	/* x7: GCSPR now.  x3, x4: target GCSPR.  x5, x6: tmp regs.  */
++L(gcs_scan):
++	cmp	x7, x4
++	b.eq	L(gcs_pop)
++	sub	x4, x4, 8
++	/* Check for a cap token.  */
++	ldr	x5, [x4]
++	and	x6, x4, 0xfffffffffffff000
++	orr	x6, x6, 1
++	cmp	x5, x6
++	b.ne	L(gcs_scan)
++L(gcs_switch):
++	add	x7, x4, 8
++	GCSSS1 (x4)
++	GCSSS2 (xzr)
++L(gcs_pop):
++	cmp	x7, x3
++	b.eq	L(gcs_done_lj)
++	GCSPOPM (xzr)
++	add	x7, x7, 8
++	b	L(gcs_pop)
++L(gcs_done_lj):
++
++	ldr	x3, [x1, 10*16 + 8]
+ 	ldp	x29, x30, [x1]
+ 	cfi_def_cfa(x1, 0)
+ 	CFI_PAC_TOGGLE
+@@ -132,6 +179,7 @@ GTM_longjmp:
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+ #define FEATURE_1_PAC 2
++#define FEATURE_1_GCS 4
+ 
+ /* Supported features based on the code generation options.  */
+ #if defined(__ARM_FEATURE_BTI_DEFAULT)
+@@ -146,6 +194,12 @@ GTM_longjmp:
+ # define PAC_FLAG 0
+ #endif
+ 
++#if __ARM_FEATURE_GCS_DEFAULT
++# define GCS_FLAG FEATURE_1_GCS
++#else
++# define GCS_FLAG 0
++#endif
++
+ /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
+ #define GNU_PROPERTY(type, value)	\
+   .section .note.gnu.property, "a";	\
+@@ -163,7 +217,7 @@ GTM_longjmp:
+ .section .note.GNU-stack, "", %progbits
+ 
+ /* Add GNU property note if built with branch protection.  */
+-# if (BTI_FLAG|PAC_FLAG) != 0
+-GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG)
++# if (BTI_FLAG|PAC_FLAG|GCS_FLAG) != 0
++GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG|GCS_FLAG)
+ # endif
+ #endif
+diff --git a/libitm/config/aarch64/target.h b/libitm/config/aarch64/target.h
+index 3d99197bfab..a1f39b4bf7a 100644
+--- a/libitm/config/aarch64/target.h
++++ b/libitm/config/aarch64/target.h
+@@ -30,6 +30,7 @@ typedef struct gtm_jmpbuf
+   unsigned long long pc;	/* x30 */
+   unsigned long long gr[10];	/* x19-x28 */
+   unsigned long long vr[8];	/* d8-d15 */
++  void *gcs;			/* GCSPR_EL0 */
+   void *cfa;
+ } gtm_jmpbuf;
+ 
+-- 
+2.34.1
+
+
+From c3a32ae0e30d2f4c51659751bc784b1c84ca1351 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 28 Dec 2023 13:37:38 +0000
+Subject: [PATCH 19/19] aarch64: Introduce indirect_return attribute
+
+Tail calls of indirect_return functions from non-indirect_return
+functions are disallowed even if BTI is disabled, since the call
+site may have BTI enabled.
+
+Following x86, mismatching attribute on function pointers is not
+a type error even though this can lead to bugs.
+
+Needed for swapcontext within the same function when GCS is enabled.
+
+TODO: arm? docs, tests. feature detection?
+
+gcc/ChangeLog:
+
+	* config/aarch64/aarch64.cc (aarch64_gnu_attributes): Add
+	indirect_return.
+	(aarch64_function_ok_for_sibcall): Disallow tail calls if caller
+	is non-indirect_return but callee is indirect_return.
+	(aarch64_comp_type_attributes): Check indirect_return attribute.
+	* config/arm/aarch-bti-insert.cc (call_needs_bti_j): New.
+	(rest_of_insert_bti): Use call_needs_bti_j.
+---
+ gcc/config/aarch64/aarch64.cc      | 11 +++++++++
+ gcc/config/arm/aarch-bti-insert.cc | 36 ++++++++++++++++++++++++++----
+ 2 files changed, 43 insertions(+), 4 deletions(-)
+
+diff --git a/gcc/config/aarch64/aarch64.cc b/gcc/config/aarch64/aarch64.cc
+index 0119cfdd67b..593b107c8a5 100644
+--- a/gcc/config/aarch64/aarch64.cc
++++ b/gcc/config/aarch64/aarch64.cc
+@@ -850,6 +850,7 @@ static const attribute_spec aarch64_gnu_attributes[] =
+        affects_type_identity, handler, exclude } */
+   { "aarch64_vector_pcs", 0, 0, false, true,  true,  true,
+ 			  handle_aarch64_vector_pcs_attribute, NULL },
++  { "indirect_return",    0, 0, false, true, true, false, NULL, NULL },
+   { "arm_sve_vector_bits", 1, 1, false, true,  false, true,
+ 			  aarch64_sve::handle_arm_sve_vector_bits_attribute,
+ 			  NULL },
+@@ -6340,6 +6341,14 @@ aarch64_function_ok_for_sibcall (tree, tree exp)
+     if (bool (aarch64_cfun_shared_flags (state))
+ 	!= bool (aarch64_fntype_shared_flags (fntype, state)))
+       return false;
++
++  /* BTI J is needed where indirect_return functions may return
++     if bti is enabled there.  */
++  if (lookup_attribute ("indirect_return", TYPE_ATTRIBUTES (fntype))
++      && !lookup_attribute ("indirect_return",
++			    TYPE_ATTRIBUTES (TREE_TYPE (cfun->decl))))
++    return false;
++
+   return true;
+ }
+ 
+@@ -28855,6 +28864,8 @@ aarch64_comp_type_attributes (const_tree type1, const_tree type2)
+ 
+   if (!check_attr ("gnu", "aarch64_vector_pcs"))
+     return 0;
++  if (!check_attr ("gnu", "indirect_return"))
++    return 0;
+   if (!check_attr ("gnu", "Advanced SIMD type"))
+     return 0;
+   if (!check_attr ("gnu", "SVE type"))
+diff --git a/gcc/config/arm/aarch-bti-insert.cc b/gcc/config/arm/aarch-bti-insert.cc
+index 14d36971cd4..403afff9120 100644
+--- a/gcc/config/arm/aarch-bti-insert.cc
++++ b/gcc/config/arm/aarch-bti-insert.cc
+@@ -92,6 +92,35 @@ const pass_data pass_data_insert_bti =
+   0, /* todo_flags_finish.  */
+ };
+ 
++/* Decide if BTI J is needed after a call instruction.  */
++static bool
++call_needs_bti_j (rtx_insn *insn)
++{
++  /* Call returns twice, one of which may be indirect.  */
++  if (find_reg_note (insn, REG_SETJMP, NULL))
++    return true;
++
++  /* Tail call does not return.  */
++  if (SIBLING_CALL_P (insn))
++    return false;
++
++  /* Check if the function is marked to return indirectly.  */
++  rtx call = get_call_rtx_from (insn);
++  rtx fnaddr = XEXP (call, 0);
++  tree fndecl = NULL_TREE;
++  if (GET_CODE (XEXP (fnaddr, 0)) == SYMBOL_REF)
++    fndecl = SYMBOL_REF_DECL (XEXP (fnaddr, 0));
++  if (fndecl == NULL_TREE)
++    fndecl = MEM_EXPR (fnaddr);
++  if (!fndecl)
++    return false;
++  if (TREE_CODE (TREE_TYPE (fndecl)) != FUNCTION_TYPE
++      && TREE_CODE (TREE_TYPE (fndecl)) != METHOD_TYPE)
++    return false;
++  tree fntype = TREE_TYPE (fndecl);
++  return lookup_attribute ("indirect_return", TYPE_ATTRIBUTES (fntype));
++}
++
+ /* Insert the BTI instruction.  */
+ /* This is implemented as a late RTL pass that runs before branch
+    shortening and does the following.  */
+@@ -147,10 +176,9 @@ rest_of_insert_bti (void)
+ 		}
+ 	    }
+ 
+-	  /* Also look for calls to setjmp () which would be marked with
+-	     REG_SETJMP note and put a BTI J after.  This is where longjump ()
+-	     will return.  */
+-	  if (CALL_P (insn) && (find_reg_note (insn, REG_SETJMP, NULL)))
++	  /* Also look for calls that may return indirectly, such as setjmp,
++	     and put a BTI J after them.  */
++	  if (CALL_P (insn) && call_needs_bti_j (insn))
+ 	    {
+ 	      bti_insn = aarch_gen_bti_j ();
+ 	      emit_insn_after (bti_insn, insn);
+-- 
+2.34.1
+

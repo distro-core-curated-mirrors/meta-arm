@@ -1,0 +1,52 @@
+header:
+  version: 14
+
+distro: poky
+
+machine: fvp-base
+
+repos:
+  meta-arm:
+    layers:
+      meta-arm:
+      meta-arm-bsp:
+      meta-arm-toolchain:
+      meta-arm-gcs:
+
+  poky:
+    url: https://git.yoctoproject.org/git/poky-contrib
+    branch: ross/gcc14
+    layers:
+      meta:
+      meta-poky:
+
+local_conf_header:
+  setup: |
+    # We accept the FVP EULA
+    LICENSE_FLAGS_ACCEPTED += "Arm-FVP-EULA"
+    # Enable running an image inside a FVP
+    IMAGE_CLASSES += "fvpboot"
+    # Use the 6.8 kernel
+    PREFERRED_PROVIDER_virtual/kernel = "linux-yocto-dev"
+    # No root password for ease
+    EXTRA_IMAGE_FEATURES += "empty-root-password"
+    # Install a toolchain
+    EXTRA_IMAGE_FEATURES += "tools-sdk"
+    # Install a pre-generated SSH key because key generation in a FVP is tiresome
+    CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys"
+
+  fvp_options: |
+    # Set the cores to v9.4 and turn on more features
+    FVP_CONFIG[cluster0.has_arm_v9-4] = "1"
+    FVP_CONFIG[cluster1.has_arm_v9-4] = "1"
+    FVP_CONFIG[cluster0.has_branch_target_exception] = "1"
+    FVP_CONFIG[cluster1.has_branch_target_exception] = "1"
+    FVP_CONFIG[cluster0.has_gcs] = "1"
+    FVP_CONFIG[cluster1.has_gcs] = "1"
+    FVP_CONFIG[cluster0.has_chkfeat] = "1"
+    FVP_CONFIG[cluster1.has_chkfeat] = "1"
+    FVP_CONFIG[cluster0.has_permission_indirection_s1] = "1"
+    FVP_CONFIG[cluster1.has_permission_indirection_s1] = "1"
+
+target:
+  - core-image-full-cmdline

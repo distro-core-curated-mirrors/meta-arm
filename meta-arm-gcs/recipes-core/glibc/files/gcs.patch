@@ -1,0 +1,1668 @@
+Upstream-Status: Pending [https://sourceware.org/git/?p=glibc.git;a=shortlog;h=refs/heads/arm/gcs]
+Signed-off-by: Ross Burton <ross.burton@arm.com>
+
+From ccb4e98a6cbdf5b8939a6ae416248bb1436a1338 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 13 Jul 2023 06:43:33 +0100
+Subject: [PATCH 01/21] aarch64: Add HWCAP2_GCS
+
+---
+ sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h b/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
+index 91f0e312b9..476cf5a299 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
++++ b/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
+@@ -100,3 +100,4 @@
+ #define HWCAP2_SME_F16F16	(1UL << 42)
+ #define HWCAP2_MOPS		(1UL << 43)
+ #define HWCAP2_HBC		(1UL << 44)
++#define HWCAP2_GCS		(1UL << 48)
+-- 
+2.34.1
+
+
+From 15d1674cae644619d521af249b3a4f1c17cdcee9 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 22 Feb 2023 14:35:00 +0000
+Subject: [PATCH 02/21] aarch64: Add asm helpers for GCS
+
+The Guarded Control Stack instructions can be present even if the
+hardware does not support the extension (runtime checked feature),
+so the asm code should be backward compatible with old assemblers.
+---
+ sysdeps/aarch64/sysdep.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sysdeps/aarch64/sysdep.h b/sysdeps/aarch64/sysdep.h
+index 464674e89c..661d9fe8c1 100644
+--- a/sysdeps/aarch64/sysdep.h
++++ b/sysdeps/aarch64/sysdep.h
+@@ -74,6 +74,13 @@ strip_pac (void *p)
+ #define PACIASP		hint	25
+ #define AUTIASP		hint	29
+ 
++/* Guarded Control Stack support.  */
++#define CHKFEAT_X16	hint	40
++#define MRS_GCSPR(x)	mrs	x, s3_3_c2_c5_1
++#define GCSPOPM(x)	sysl	x, #3, c7, c7, #1
++#define GCSSS1(x)	sys	#3, c7, c7, #2, x
++#define GCSSS2(x)	sysl	x, #3, c7, c7, #3
++
+ /* GNU_PROPERTY_AARCH64_* macros from elf.h for use in asm code.  */
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+-- 
+2.34.1
+
+
+From 0f6417aafcb5332cea53f81daa2dca9588c8b733 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 22 Dec 2023 09:47:33 +0000
+Subject: [PATCH 03/21] elf.h: define GNU_PROPERTY_AARCH64_FEATURE_1_GCS
+
+---
+ elf/elf.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/elf/elf.h b/elf/elf.h
+index 455731663c..f927dad3c3 100644
+--- a/elf/elf.h
++++ b/elf/elf.h
+@@ -1377,6 +1377,7 @@ typedef struct
+ 
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_PAC	(1U << 1)
++#define GNU_PROPERTY_AARCH64_FEATURE_1_GCS	(1U << 2)
+ 
+ /* The x86 instruction sets indicated by the corresponding bits are
+    used in program.  Their support in the hardware is optional.  */
+-- 
+2.34.1
+
+
+From 6c7378b54f6f8c3db222894ed27342782bf526b7 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 22 Dec 2023 12:29:48 +0000
+Subject: [PATCH 04/21] aarch64: mark objects with GCS property note
+
+TODO: binutils config check
+TODO: build attributes instead of gnu property
+---
+ sysdeps/aarch64/sysdep.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/sysdeps/aarch64/sysdep.h b/sysdeps/aarch64/sysdep.h
+index 661d9fe8c1..55e0230b5e 100644
+--- a/sysdeps/aarch64/sysdep.h
++++ b/sysdeps/aarch64/sysdep.h
+@@ -85,6 +85,7 @@ strip_pac (void *p)
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+ #define FEATURE_1_PAC 2
++#define FEATURE_1_GCS 4
+ 
+ /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
+ #define GNU_PROPERTY(type, value)	\
+@@ -103,9 +104,9 @@ strip_pac (void *p)
+ /* Add GNU property note with the supported features to all asm code
+    where sysdep.h is included.  */
+ #if HAVE_AARCH64_BTI && HAVE_AARCH64_PAC_RET
+-GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC)
++GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC|FEATURE_1_GCS)
+ #elif HAVE_AARCH64_BTI
+-GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI)
++GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_GCS)
+ #endif
+ 
+ /* Define an entry point visible from C.  */
+-- 
+2.34.1
+
+
+From e6bc31c117194bfadcf10a6c90b6586800a33a11 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 25 Nov 2022 18:16:07 +0000
+Subject: [PATCH 05/21] aarch64: Define jmp_buf offset for GCS
+
+The target specific internal __longjmp is called with a __jmp_buf
+argument which has its size exposed in the ABI. On aarch64 this has
+no space left, so GCSPR cannot be restored in longjmp in the usual
+way, which is needed for the Guarded Control Stack (GCS) extension.
+
+setjmp is implemented via __sigsetjmp which has a jmp_buf argument
+however it is also called with __pthread_unwind_buf_t argument cast
+to jmp_buf (in cancellation cleanup code built with -fno-exception).
+The two types, jmp_buf and __pthread_unwind_buf_t, have common bits
+beyond the __jmp_buf field and there is unused space there which we
+can use for saving GCSPR.
+
+For this to work some bits of those two generic types have to be
+reserved for target specific use and the generic code in glibc has
+to ensure that __longjmp is always called with a __jmp_buf that is
+embedded into one of those two types. Morally __longjmp should be
+changed to take jmp_buf as argument, but that is an intrusive change
+across targets.
+
+Note: longjmp is never called with __pthread_unwind_buf_t from user
+code, only the internal __libc_longjmp is called with that type and
+thus the two types could have separate longjmp implementations on a
+target. We don't rely on this now (but migh in the future given that
+cancellation unwind does not need to restore GCSPR).
+
+Given the above this patch finds an unused slot for GCSPR. This
+placement is not exposed in the ABI so it may change in the future.
+This is also very target ABI specific so the generic types cannot
+be easily changed to clearly mark the reserved fields.
+---
+ sysdeps/aarch64/jmpbuf-offsets.h | 63 ++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+diff --git a/sysdeps/aarch64/jmpbuf-offsets.h b/sysdeps/aarch64/jmpbuf-offsets.h
+index 632328c7e2..ec047cf6b1 100644
+--- a/sysdeps/aarch64/jmpbuf-offsets.h
++++ b/sysdeps/aarch64/jmpbuf-offsets.h
+@@ -39,6 +39,69 @@
+ #define JB_D14		 20
+ #define JB_D15		 21
+ 
++/* The target specific part of jmp_buf has no space for expansion but
++   the public jmp_buf ABI type has. Unfortunately there is another type
++   that is used with setjmp APIs and exposed by thread cancellation (in
++   binaries built with -fno-exceptions) which complicates the situation.
++
++  // Internal layout of the public jmp_buf type on AArch64.
++  // This is passed to setjmp, longjmp, sigsetjmp, siglongjmp.
++  struct
++  {
++    uint64_t jmpbuf[22];     // Target specific part.
++    uint32_t mask_was_saved; // savemask bool used by sigsetjmp/siglongjmp.
++    uint32_t pad;
++    uint64_t saved_mask;     // sigset_t bits used on linux.
++    uint64_t unused[15];     // sigset_t bits not used on linux.
++  };
++
++  // Internal layout of the public __pthread_unwind_buf_t type.
++  // This is passed to sigsetjmp with !savemask and to the internal
++  // __libc_longjmp (currently alias of longjmp on AArch64).
++  struct
++  {
++    uint64_t jmpbuf[22];     // Must match jmp_buf.
++    uint32_t mask_was_saved; // Must match jmp_buf, always 0.
++    uint32_t pad;
++    void *prev;              // List for unwinding.
++    void *cleanup;           // Cleanup handlers.
++    uint32_t canceltype;     // 1 bit cancellation type.
++    uint32_t pad2;
++    void *pad3;
++  };
++
++  Ideally only the target specific part of jmp_buf (A) is accessed by
++  __setjmp and __longjmp.  But that is always embedded into one of the
++  two types above so the bits that are unused in those types (B) may be
++  reused for target specific purposes.  Setjmp can't distinguish between
++  jmp_buf and __pthread_unwind_buf_t, but longjmp can: only an internal
++  longjmp call uses the latter, so state that is not needed for cancel
++  cleanups can go to fields (C).  If generic code is refactored then the
++  usage of additional fields can be optimized (D). And some fields are
++  only accessible in the savedmask case (E). Reusability of jmp_buf
++  fields on AArch64 for target purposes:
++
++  struct
++  {
++    uint64_t A[22];  //   0 .. 176
++    uint32_t D;      // 176 .. 180
++    uint32_t B;      // 180 .. 184
++    uint64_t D;      // 184 .. 192
++    uint64_t C;      // 192 .. 200
++    uint32_t C;      // 200 .. 204
++    uint32_t B;      // 204 .. 208
++    uint64_t B;      // 208 .. 216
++    uint64_t E[12];  // 216 .. 312
++  }
++
++  The B fields can be used with minimal glibc code changes. We need a
++  64 bit field for the Guarded Control Stack pointer (GCSPR_EL0) which
++  can use a C field too as cancellation cleanup does not execute RET
++  for a previous BL of the cancelled thread, but that would require a
++  custom __libc_longjmp. This layout can change in the future.
++*/
++#define JB_GCSPR 208
++
+ #ifndef  __ASSEMBLER__
+ #include <setjmp.h>
+ #include <stdint.h>
+-- 
+2.34.1
+
+
+From c3274a8582b4915efea5a16558e730d362bea177 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 23 Feb 2023 08:54:04 +0000
+Subject: [PATCH 06/21] aarch64: Add GCS support to longjmp
+
+This implementations ensures that longjmp across different stacks
+works: it scans for GCS cap token and switches GCS if necessary
+then the target GCSPR is restored with a GCSPOPM loop once the
+current GCSPR is on the same GCS.
+
+This makes longjmp linear time in the number of jumped over stack
+frames when GCS is enabled.
+---
+ sysdeps/aarch64/__longjmp.S | 31 +++++++++++++++++++++++++++++++
+ sysdeps/aarch64/setjmp.S    | 10 ++++++++++
+ 2 files changed, 41 insertions(+)
+
+diff --git a/sysdeps/aarch64/__longjmp.S b/sysdeps/aarch64/__longjmp.S
+index 7b6add751e..ecd272262d 100644
+--- a/sysdeps/aarch64/__longjmp.S
++++ b/sysdeps/aarch64/__longjmp.S
+@@ -91,6 +91,37 @@ ENTRY (__longjmp)
+ 	ldp	d12, d13, [x0, #JB_D12<<3]
+ 	ldp	d14, d15, [x0, #JB_D14<<3]
+ 
++	/* GCS support.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done)
++	MRS_GCSPR (x2)
++	ldr	x3, [x0, #JB_GCSPR]
++	mov	x4, x3
++	/* x2: GCSPR now.  x3, x4: target GCSPR.  x5, x6: tmp regs.  */
++L(gcs_scan):
++	cmp	x2, x4
++	b.eq	L(gcs_pop)
++	sub	x4, x4, 8
++	/* Check for a cap token.  */
++	ldr	x5, [x4]
++	and	x6, x4, 0xfffffffffffff000
++	orr	x6, x6, 1
++	cmp	x5, x6
++	b.eq	L(gcs_switch)
++	b	L(gcs_scan)
++L(gcs_switch):
++	add	x2, x4, 8
++	GCSSS1 (x4)
++	GCSSS2 (xzr)
++L(gcs_pop):
++	cmp	x2, x3
++	b.eq	L(gcs_done)
++	GCSPOPM (xzr)
++	add	x2, x2, 8
++	b	L(gcs_pop)
++L(gcs_done):
++
+         /* Originally this was implemented with a series of
+ 	   .cfi_restore() directives.
+ 
+diff --git a/sysdeps/aarch64/setjmp.S b/sysdeps/aarch64/setjmp.S
+index 43fdb1b2fb..f7ffccfaba 100644
+--- a/sysdeps/aarch64/setjmp.S
++++ b/sysdeps/aarch64/setjmp.S
+@@ -57,6 +57,16 @@ ENTRY (__sigsetjmp)
+ 	stp	d10, d11, [x0, #JB_D10<<3]
+ 	stp	d12, d13, [x0, #JB_D12<<3]
+ 	stp	d14, d15, [x0, #JB_D14<<3]
++
++	/* GCS support.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done)
++	MRS_GCSPR (x2)
++	add	x2, x2, 8 /* GCS state right after setjmp returns.  */
++	str	x2, [x0, #JB_GCSPR]
++L(gcs_done):
++
+ #ifdef PTR_MANGLE
+ 	mov	x4, sp
+ 	PTR_MANGLE (5, 4, 3, 2)
+-- 
+2.34.1
+
+
+From 868c129b90a52f7c30b8a560dc580f851db4b6fc Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 27 Dec 2023 18:36:10 +0000
+Subject: [PATCH 07/21] aarch64: Add GCS support to vfork
+
+---
+ sysdeps/unix/sysv/linux/aarch64/vfork.S | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/vfork.S b/sysdeps/unix/sysv/linux/aarch64/vfork.S
+index e71e492da3..cfaf4a1ffb 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/vfork.S
++++ b/sysdeps/unix/sysv/linux/aarch64/vfork.S
+@@ -33,8 +33,14 @@ ENTRY (__vfork)
+ 
+ 	cmn	x0, #4095
+ 	b.cs    .Lsyscall_error
++	cbz	x0, L(child)
+ 	RET
+-
++L(child):
++	/* Return with indirect branch in the child to support GCS.
++	   Clear x30 to crash early if the child tries to ret.  */
++	mov	x1, x30
++	mov	x30, 0
++	br	x1
+ PSEUDO_END (__vfork)
+ libc_hidden_def (__vfork)
+ 
+-- 
+2.34.1
+
+
+From 996a31b2a3313039b5c66d7de15577e5bc145278 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 24 Feb 2023 16:29:32 +0000
+Subject: [PATCH 08/21] aarch64: Add GCS support for setcontext
+
+Userspace ucontext needs to store GCSPR, it does not have to be
+compatible with the kernel ucontext. For now we use the linux
+struct gcs_context layout but only use the gcspr field from it.
+
+Similar implementation to the longjmp code, supports switching GCS
+if the target GCS is capped, and unwinding a continous GCS to a
+previous state.
+---
+ sysdeps/unix/sysv/linux/aarch64/getcontext.S  | 17 +++++++-
+ sysdeps/unix/sysv/linux/aarch64/setcontext.S  | 39 +++++++++++++++++++
+ sysdeps/unix/sysv/linux/aarch64/swapcontext.S | 32 +++++++++++----
+ .../sysv/linux/aarch64/ucontext-internal.h    |  5 +++
+ 4 files changed, 84 insertions(+), 9 deletions(-)
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/getcontext.S b/sysdeps/unix/sysv/linux/aarch64/getcontext.S
+index e5b69c9a82..30e2b39399 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/getcontext.S
++++ b/sysdeps/unix/sysv/linux/aarch64/getcontext.S
+@@ -83,9 +83,24 @@ ENTRY(__getcontext)
+ 	mrs	x4, fpcr
+ 	str	w4, [x3, oFPCR - oFPSR]
+ 
+-	/* Write the termination context extension header.  */
+ 	add	x2, x2, #FPSIMD_CONTEXT_SIZE
+ 
++	/* Save the GCSPR.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done)
++	mov	w3, #(GCS_MAGIC & 0xffff)
++	movk	w3, #(GCS_MAGIC >> 16), lsl #16
++	str	w3, [x2, #oHEAD + oMAGIC]
++	mov	w3, #GCS_CONTEXT_SIZE
++	str	w3, [x2, #oHEAD + oSIZE]
++	MRS_GCSPR (x4)
++	add	x4, x4, 8 /* GCS state right after getcontext returns.  */
++	str	x4, [x2, #oGCSPR]
++	add	x2, x2, #GCS_CONTEXT_SIZE
++L(gcs_done):
++
++	/* Write the termination context extension header.  */
+ 	str	wzr, [x2, #oHEAD + oMAGIC]
+ 	str	wzr, [x2, #oHEAD + oSIZE]
+ 
+diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+index ba659438c5..c08e83ee60 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
++++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+@@ -130,6 +130,45 @@ ENTRY (__setcontext)
+ 	ldr	w4, [x3, oFPCR - oFPSR]
+ 	msr	fpcr, x4
+ 
++	/* Restore the GCS.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbnz	x16, 0, L(gcs_done)
++	/* Get target GCS from GCS context.  */
++	ldr	w1, [x2, #oHEAD + oSIZE]
++	add	x2, x2, x1
++	mov	w3, #(GCS_MAGIC & 0xffff)
++	movk	w3, #(GCS_MAGIC >> 16), lsl #16
++	ldr	w1, [x2, #oHEAD + oMAGIC]
++	cmp	w1, w3
++	b.ne	L(gcs_done)
++	ldr	x3, [x2, #oGCSPR]
++	MRS_GCSPR (x2)
++	mov	x4, x3
++	/* x2: GCSPR now.  x3, x4: target GCSPR.  x5, x6: tmp regs.  */
++L(gcs_scan):
++	cmp	x2, x4
++	b.eq	L(gcs_pop)
++	sub	x4, x4, 8
++	/* Check for a cap token.  */
++	ldr	x5, [x4]
++	and	x6, x4, 0xfffffffffffff000
++	orr	x6, x6, 1
++	cmp	x5, x6
++	b.eq	L(gcs_switch)
++	b	L(gcs_scan)
++L(gcs_switch):
++	add	x2, x4, 8
++	GCSSS1 (x4)
++	GCSSS2 (xzr)
++L(gcs_pop):
++	cmp	x2, x3
++	b.eq	L(gcs_done)
++	GCSPOPM (xzr)
++	add	x2, x2, 8
++	b	L(gcs_pop)
++L(gcs_done):
++
+ 2:
+ 	ldr     x16, [x0, oPC]
+ 	/* Restore arg registers.  */
+diff --git a/sysdeps/unix/sysv/linux/aarch64/swapcontext.S b/sysdeps/unix/sysv/linux/aarch64/swapcontext.S
+index f049140d35..45b1277c74 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/swapcontext.S
++++ b/sysdeps/unix/sysv/linux/aarch64/swapcontext.S
+@@ -32,8 +32,15 @@ ENTRY(__swapcontext)
+ 	   And set up x1 to become the return address of the caller, so we
+ 	   can return there with a normal RET instead of an indirect jump.  */
+ 	stp	xzr, x30, [x0, oX0 +  0 * SZREG]
++
++	/* With GCS, swapcontext calls are followed by BTI J, otherwise
++	   we have to be compatible with old BTI enabled binaries.  */
++	mov	x16, 1
++	CHKFEAT_X16
++	tbz	x16, 0, L(skip_x30_redirect)
+ 	/* Arrange the oucp context to return to 2f.  */
+ 	adr	x30, 2f
++L(skip_x30_redirect):
+ 
+ 	stp	x18, x19, [x0, oX0 + 18 * SZREG]
+ 	stp	x20, x21, [x0, oX0 + 20 * SZREG]
+@@ -72,14 +79,27 @@ ENTRY(__swapcontext)
+ 	mrs	x4, fpcr
+ 	str	w4, [x3, #oFPCR - oFPSR]
+ 
+-	/* Write the termination context extension header.  */
+ 	add	x2, x2, #FPSIMD_CONTEXT_SIZE
+ 
++	/* Save the GCSPR.  */
++	tbnz	x16, 0, L(gcs_done)
++	mov	w3, #(GCS_MAGIC & 0xffff)
++	movk	w3, #(GCS_MAGIC >> 16), lsl #16
++	str	w3, [x2, #oHEAD + oMAGIC]
++	mov	w3, #GCS_CONTEXT_SIZE
++	str	w3, [x2, #oHEAD + oSIZE]
++	MRS_GCSPR (x4)
++	add	x4, x4, 8 /* GCSPR of the caller.  */
++	str	x4, [x2, #oGCSPR]
++	add	x2, x2, #GCS_CONTEXT_SIZE
++L(gcs_done):
++
++	/* Write the termination context extension header.  */
+ 	str	wzr, [x2, #oHEAD + oMAGIC]
+ 	str	wzr, [x2, #oHEAD + oSIZE]
+ 
+ 	/* Preserve ucp.  */
+-	mov	x21, x1
++	mov	x9, x1
+ 
+ 	/* rt_sigprocmask (SIG_SETMASK, &ucp->uc_sigmask, &oucp->uc_sigmask,
+ 			   _NSIG8) */
+@@ -93,12 +113,8 @@ ENTRY(__swapcontext)
+ 	svc	0
+ 	cbnz	x0, 1f
+ 
+-	mov     x22, x30
+-	mov	x0, x21
+-	bl	JUMPTARGET (__setcontext)
+-	mov     x30, x22
+-	RET
+-
++	mov	x0, x9
++	b	JUMPTARGET (__setcontext)
+ 1:
+ 	b	C_SYMBOL_NAME(__syscall_error)
+ 2:
+diff --git a/sysdeps/unix/sysv/linux/aarch64/ucontext-internal.h b/sysdeps/unix/sysv/linux/aarch64/ucontext-internal.h
+index 096d5fb7c7..84f5365c0e 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/ucontext-internal.h
++++ b/sysdeps/unix/sysv/linux/aarch64/ucontext-internal.h
+@@ -43,3 +43,8 @@
+ #define oX21 (oX0 + 21*8)
+ #define oFP  (oX0 + 29*8)
+ #define oLR  (oX0 + 30*8)
++
++/* Use kernel layout for saving GCSPR in ucontext.  */
++#define GCS_MAGIC 0x47435300
++#define GCS_CONTEXT_SIZE 32
++#define oGCSPR 8
+-- 
+2.34.1
+
+
+From 99f884d57f17afea877006284f469747711e1d51 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 28 Dec 2023 15:53:38 +0000
+Subject: [PATCH 09/21] aarch64: mark swapcontext with indirect_return
+
+---
+ sysdeps/aarch64/bits/indirect-return.h | 36 ++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+ create mode 100644 sysdeps/aarch64/bits/indirect-return.h
+
+diff --git a/sysdeps/aarch64/bits/indirect-return.h b/sysdeps/aarch64/bits/indirect-return.h
+new file mode 100644
+index 0000000000..99905f21fa
+--- /dev/null
++++ b/sysdeps/aarch64/bits/indirect-return.h
+@@ -0,0 +1,36 @@
++/* Definition of __INDIRECT_RETURN.  AArch64 version.
++   Copyright (C) 2024 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#ifndef _UCONTEXT_H
++# error "Never include <bits/indirect-return.h> directly; use <ucontext.h> instead."
++#endif
++
++/* __INDIRECT_RETURN indicates that swapcontext may return via
++   an indirect branch.  This happens when GCS is enabled, so
++   add the attribute if available, otherwise returns_twice has
++   a similar effect, but it prevents some code transformations
++   that can cause build failures in some rare cases so it is
++   only used when GCS is enabled.  */
++#if __glibc_has_attribute (__indirect_return__)
++# define __INDIRECT_RETURN __attribute__ ((__indirect_return__))
++#elif __glibc_has_attribute (__returns_twice__) \
++      && defined __ARM_FEATURE_GCS_DEFAULT
++# define __INDIRECT_RETURN __attribute__ ((__returns_twice__))
++#else
++# define __INDIRECT_RETURN
++#endif
+-- 
+2.34.1
+
+
+From 54e90582aabdb44f010ad5dfd64ce9c3e6d33914 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Tue, 4 Apr 2023 10:42:21 +0100
+Subject: [PATCH 10/21] aarch64: Add GCS support for makecontext
+
+Changed the makecontext logic: previously the first setcontext jumped
+straight to the user callback function and the return address is set
+to __startcontext. This does not work when GCS is enabled as the
+integrity of the return address is protected, so instead the context
+is setup such that setcontext jumps to __startcontext which calls the
+user callback (passed in x20).
+
+The map_shadow_stack syscall is used to allocate a suitably sized GCS
+(which includes some reserved area to account for altstack signal
+handlers and otherwise supports maximum number of 16 byte aligned
+stack frames on the given stack) however the GCS is never freed as
+the lifetime of ucontext and related stack is user managed.
+---
+ sysdeps/unix/sysv/linux/aarch64/makecontext.c | 61 ++++++++++++++++++-
+ sysdeps/unix/sysv/linux/aarch64/setcontext.S  |  4 ++
+ 2 files changed, 63 insertions(+), 2 deletions(-)
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/makecontext.c b/sysdeps/unix/sysv/linux/aarch64/makecontext.c
+index 5aec182013..9e66b6761c 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/makecontext.c
++++ b/sysdeps/unix/sysv/linux/aarch64/makecontext.c
+@@ -22,6 +22,52 @@
+ #include <stdint.h>
+ #include <ucontext.h>
+ 
++#define GCS_MAGIC 0x47435300
++
++static struct _aarch64_ctx *extension (void *p)
++{
++  return p;
++}
++
++#ifndef __NR_map_shadow_stack
++# define __NR_map_shadow_stack 453
++#endif
++#ifndef SHADOW_STACK_SET_TOKEN
++# define SHADOW_STACK_SET_TOKEN (1UL << 0)
++# define SHADOW_STACK_SET_MARKER (1UL << 1)
++#endif
++
++static void *
++map_shadow_stack (void *addr, size_t size, unsigned long flags)
++{
++  return (void *) INLINE_SYSCALL_CALL (map_shadow_stack, addr, size, flags);
++}
++
++#define GCS_MAX_SIZE (1UL << 31)
++#define GCS_ALTSTACK_RESERVE 160
++
++static void *
++alloc_makecontext_gcs (size_t stack_size)
++{
++  size_t size = (stack_size / 2 + GCS_ALTSTACK_RESERVE) & -8UL;
++  if (size > GCS_MAX_SIZE)
++    size = GCS_MAX_SIZE;
++
++  unsigned long flags = SHADOW_STACK_SET_MARKER | SHADOW_STACK_SET_TOKEN;
++  void *base = map_shadow_stack (NULL, size, flags);
++  if (base == (void *) -1)
++    /* ENOSYS, bad size or OOM.  */
++    abort ();
++  uint64_t *gcsp = (uint64_t *) ((char *) base + size);
++  /* Skip end of GCS token.  */
++  gcsp--;
++  /* Verify GCS cap token.  */
++  gcsp--;
++  if (((uint64_t)gcsp & 0xfffffffffffff000) + 1 != *gcsp)
++    abort ();
++  /* Return the target GCS pointer for context switch.  */
++  return gcsp + 1;
++}
+ 
+ /* makecontext sets up a stack and the registers for the
+    user context.  The stack looks like this:
+@@ -56,10 +102,21 @@ __makecontext (ucontext_t *ucp, void (*func) (void), int argc, ...)
+   sp = (uint64_t *) (((uintptr_t) sp) & -16L);
+ 
+   ucp->uc_mcontext.regs[19] = (uintptr_t) ucp->uc_link;
++  ucp->uc_mcontext.regs[20] = (uintptr_t) func;
+   ucp->uc_mcontext.sp = (uintptr_t) sp;
+-  ucp->uc_mcontext.pc = (uintptr_t) func;
++  ucp->uc_mcontext.pc = (uintptr_t) __startcontext;
+   ucp->uc_mcontext.regs[29] = (uintptr_t) 0;
+-  ucp->uc_mcontext.regs[30] = (uintptr_t) &__startcontext;
++  ucp->uc_mcontext.regs[30] = (uintptr_t) 0;
++
++  void *p = ucp->uc_mcontext.__reserved;
++  if (extension (p)->magic == FPSIMD_MAGIC)
++    p = (char *)p + extension (p)->size;
++  if (extension (p)->magic == GCS_MAGIC)
++    {
++      /* Using the kernel struct gcs_context layout.  */
++      struct { uint64_t x, gcspr, y, z; } *q = p;
++      q->gcspr = (uint64_t) alloc_makecontext_gcs (ucp->uc_stack.ss_size);
++    }
+ 
+   va_start (ap, argc);
+   for (i = 0; i < argc; ++i)
+diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+index c08e83ee60..6aa7236693 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
++++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+@@ -181,7 +181,11 @@ L(gcs_done):
+ PSEUDO_END (__setcontext)
+ weak_alias (__setcontext, setcontext)
+ 
++/* makecontext start function: receives uc_link in x19 and func in x20.
++   Arguments of func, x29, x30 and sp are set up by the caller.  */
+ ENTRY (__startcontext)
++	cfi_undefined (x30)
++	blr	x20
+ 	mov	x0, x19
+ 	cbnz	x0, __setcontext
+ 1:	b       HIDDEN_JUMPTARGET (exit)
+-- 
+2.34.1
+
+
+From 56253d5f47330f502dd6bc8f3e12eeabf6c20a8b Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Mon, 17 Jul 2023 16:54:15 +0100
+Subject: [PATCH 11/21] aarch64: Try to free the GCS of makecontext
+
+Free GCS after a makecontext start func returns and at thread exit, so
+assume makecontext cannot outlive the thread where it was created.
+
+This is an attempt to bound the lifetime of the GCS allocated for
+makecontext, but it is still possible to have significant GCS leaks,
+new GCS aware APIs could solve that, but that would not allow using
+GCS with existing code transparently.
+---
+ include/set-freeres.h                         |  4 ++
+ malloc/thread-freeres.c                       |  3 +
+ sysdeps/unix/sysv/linux/aarch64/makecontext.c | 65 +++++++++++++++++++
+ sysdeps/unix/sysv/linux/aarch64/setcontext.S  | 19 +++++-
+ sysdeps/unix/sysv/linux/aarch64/sysdep.h      |  6 +-
+ 5 files changed, 93 insertions(+), 4 deletions(-)
+
+diff --git a/include/set-freeres.h b/include/set-freeres.h
+index 4177b453fa..c3d64b4f41 100644
+--- a/include/set-freeres.h
++++ b/include/set-freeres.h
+@@ -78,6 +78,10 @@ extern void __nss_database_freeres (void) attribute_hidden;
+ extern int _IO_cleanup (void) attribute_hidden;;
+ /* From dlfcn/dlerror.c */
+ extern void __libc_dlerror_result_free (void) attribute_hidden;
++/* From libc.so, arch specific.  */
++#ifdef ARCH_THREAD_FREERES
++extern void ARCH_THREAD_FREERES (void) attribute_hidden;
++#endif
+ 
+ /* From either libc.so or libpthread.so  */
+ extern void __libpthread_freeres (void) attribute_hidden;
+diff --git a/malloc/thread-freeres.c b/malloc/thread-freeres.c
+index 55ba4e7b83..69867f3a3b 100644
+--- a/malloc/thread-freeres.c
++++ b/malloc/thread-freeres.c
+@@ -29,6 +29,9 @@
+ void
+ __libc_thread_freeres (void)
+ {
++#ifdef ARCH_THREAD_FREERES
++  call_function_static_weak (ARCH_THREAD_FREERES);
++#endif
+ #if SHLIB_COMPAT (libc, GLIBC_2_0, GLIBC_2_32)
+   __rpc_thread_destroy ();
+ #endif
+diff --git a/sysdeps/unix/sysv/linux/aarch64/makecontext.c b/sysdeps/unix/sysv/linux/aarch64/makecontext.c
+index 9e66b6761c..779f7e55aa 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/makecontext.c
++++ b/sysdeps/unix/sysv/linux/aarch64/makecontext.c
+@@ -20,7 +20,9 @@
+ #include <sysdep.h>
+ #include <stdarg.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ #include <ucontext.h>
++#include <sys/mman.h>
+ 
+ #define GCS_MAGIC 0x47435300
+ 
+@@ -29,6 +31,47 @@ static struct _aarch64_ctx *extension (void *p)
+   return p;
+ }
+ 
++struct gcs_list {
++  struct gcs_list *next;
++  void *base;
++  size_t size;
++};
++
++static __thread struct gcs_list *gcs_list_head = NULL;
++
++static void
++record_gcs (void *base, size_t size)
++{
++  struct gcs_list *p = malloc (sizeof *p);
++  if (p == NULL)
++    abort ();
++  p->base = base;
++  p->size = size;
++  p->next = gcs_list_head;
++  gcs_list_head = p;
++}
++
++static void
++free_gcs_list (void)
++{
++  for (;;)
++    {
++      struct gcs_list *p = gcs_list_head;
++      if (p == NULL)
++	break;
++      gcs_list_head = p->next;
++      __munmap (p->base, p->size);
++      free (p);
++    }
++}
++
++/* Called during thread shutdown to free resources.  */
++void
++__libc_aarch64_thread_freeres (void)
++{
++  free_gcs_list ();
++}
++
+ #ifndef __NR_map_shadow_stack
+ # define __NR_map_shadow_stack 453
+ #endif
+@@ -58,6 +101,9 @@ alloc_makecontext_gcs (size_t stack_size)
+   if (base == (void *) -1)
+     /* ENOSYS, bad size or OOM.  */
+     abort ();
++
++  record_gcs (base, size);
++
+   uint64_t *gcsp = (uint64_t *) ((char *) base + size);
+   /* Skip end of GCS token.  */
+   gcsp--;
+@@ -69,6 +115,25 @@ alloc_makecontext_gcs (size_t stack_size)
+   return gcsp + 1;
+ }
+ 
++void
++__free_makecontext_gcs (void *gcs)
++{
++  struct gcs_list *p = gcs_list_head;
++  struct gcs_list **q = &gcs_list_head;
++  for (;;)
++    {
++      if (p == NULL)
++	abort ();
++      if (gcs == p->base + p->size - 8)
++	break;
++      q = &p->next;
++      p = p->next;
++    }
++  *q = p->next;
++  __munmap (p->base, p->size);
++  free (p);
++}
++
+ /* makecontext sets up a stack and the registers for the
+    user context.  The stack looks like this:
+ 
+diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+index 6aa7236693..723be73213 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
++++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
+@@ -34,6 +34,9 @@
+ 	.text
+ 
+ ENTRY (__setcontext)
++	/* If x10 is set then old GCS is freed.  */
++	mov	x10, 0
++__setcontext_internal:
+ 	PTR_ARG (0)
+ 	/* Save a copy of UCP.  */
+ 	mov	x9, x0
+@@ -145,7 +148,8 @@ ENTRY (__setcontext)
+ 	ldr	x3, [x2, #oGCSPR]
+ 	MRS_GCSPR (x2)
+ 	mov	x4, x3
+-	/* x2: GCSPR now.  x3, x4: target GCSPR.  x5, x6: tmp regs.  */
++	mov	x1, x2
++	/* x1, x2: GCSPR now.  x3, x4: target GCSPR.  x5, x6: tmp regs.  */
+ L(gcs_scan):
+ 	cmp	x2, x4
+ 	b.eq	L(gcs_pop)
+@@ -163,10 +167,18 @@ L(gcs_switch):
+ 	GCSSS2 (xzr)
+ L(gcs_pop):
+ 	cmp	x2, x3
+-	b.eq	L(gcs_done)
++	b.eq	L(gcs_free_old)
+ 	GCSPOPM (xzr)
+ 	add	x2, x2, 8
+ 	b	L(gcs_pop)
++L(gcs_free_old):
++	cbz	x10, L(gcs_done)
++	mov	x28, x0
++	mov	x0, x1
++	bl	__free_makecontext_gcs
++	mov	x0, x28
++	ldp	x28, x29, [x0, oX0 + 28 * SZREG]
++	ldr     x30,      [x0, oX0 + 30 * SZREG]
+ L(gcs_done):
+ 
+ 2:
+@@ -187,6 +199,7 @@ ENTRY (__startcontext)
+ 	cfi_undefined (x30)
+ 	blr	x20
+ 	mov	x0, x19
+-	cbnz	x0, __setcontext
++	mov	x10, 1
++	cbnz	x0, __setcontext_internal
+ 1:	b       HIDDEN_JUMPTARGET (exit)
+ END (__startcontext)
+diff --git a/sysdeps/unix/sysv/linux/aarch64/sysdep.h b/sysdeps/unix/sysv/linux/aarch64/sysdep.h
+index bbbe35723c..590318dee8 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/sysdep.h
++++ b/sysdeps/unix/sysv/linux/aarch64/sysdep.h
+@@ -29,8 +29,12 @@
+ 
+ #include <tls.h>
+ 
+-/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
+ #ifndef __ASSEMBLER__
++/* Thread cleanup function.  */
++#define ARCH_THREAD_FREERES __libc_aarch64_thread_freeres
++void __libc_aarch64_thread_freeres (void) attribute_hidden;
++
++/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
+ #include <errno.h>
+ #endif
+ 
+-- 
+2.34.1
+
+
+From 200010339f4fa0449a7bd76555931881eaea916c Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Mon, 17 Jul 2023 08:31:05 +0100
+Subject: [PATCH 12/21] aarch64: Add glibc.cpu.aarch64_gcs tunable
+
+This tunable is for controlling the GCS status. It is the argument to
+the PR_SET_SHADOW_STACK_STATUS prctl, by default 0, so GCS is disabled.
+
+The status is stored into GL(dl_aarch64_gcs) early and only applied
+later, since enabling GCS is tricky: it must happen on a top level
+stack frame. (Using GL instead of GLRO because it may need updates
+depending on loaded libraries that happen after readonly protection
+is applied, however library marking based GCS setting is not yet
+implemented.)
+---
+ sysdeps/aarch64/dl-tunables.list              |  5 +++
+ .../unix/sysv/linux/aarch64/cpu-features.c    |  4 ++
+ .../unix/sysv/linux/aarch64/dl-procruntime.c  | 37 +++++++++++++++++++
+ 3 files changed, 46 insertions(+)
+ create mode 100644 sysdeps/unix/sysv/linux/aarch64/dl-procruntime.c
+
+diff --git a/sysdeps/aarch64/dl-tunables.list b/sysdeps/aarch64/dl-tunables.list
+index 92c6cbfa92..c08be86932 100644
+--- a/sysdeps/aarch64/dl-tunables.list
++++ b/sysdeps/aarch64/dl-tunables.list
+@@ -21,5 +21,10 @@ glibc {
+     name {
+       type: STRING
+     }
++    aarch64_gcs {
++      type: UINT_64
++      minval: 0
++      default: 0
++    }
+   }
+ }
+diff --git a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
+index b1a3f673f0..a8b6a4654a 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
++++ b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
+@@ -128,4 +128,8 @@ init_cpu_features (struct cpu_features *cpu_features)
+ 
+   /* Check if MOPS is supported.  */
+   cpu_features->mops = GLRO (dl_hwcap2) & HWCAP2_MOPS;
++
++  if (GLRO (dl_hwcap2) & HWCAP2_GCS)
++    /* GCS status may be updated later by binary compatibility checks.  */
++    GL (dl_aarch64_gcs) = TUNABLE_GET (glibc, cpu, aarch64_gcs, uint64_t, 0);
+ }
+diff --git a/sysdeps/unix/sysv/linux/aarch64/dl-procruntime.c b/sysdeps/unix/sysv/linux/aarch64/dl-procruntime.c
+new file mode 100644
+index 0000000000..23c61da6c4
+--- /dev/null
++++ b/sysdeps/unix/sysv/linux/aarch64/dl-procruntime.c
+@@ -0,0 +1,37 @@
++/* Data for processor runtime information.  AArch64 version.
++   Copyright (C) 2024 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#ifndef PROCINFO_CLASS
++# define PROCINFO_CLASS
++#endif
++
++#if !IS_IN (ldconfig)
++# if !defined PROCINFO_DECL && defined SHARED
++  ._dl_aarch64_gcs
++# else
++PROCINFO_CLASS unsigned long _dl_aarch64_gcs
++# endif
++# ifndef PROCINFO_DECL
++= 0
++# endif
++# if !defined SHARED || defined PROCINFO_DECL
++;
++# else
++,
++# endif
++#endif
+-- 
+2.34.1
+
+
+From cf7e262541c78c65a33ed78d39c6dc0a50b36d96 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 13 Jul 2023 07:22:44 +0100
+Subject: [PATCH 13/21] aarch64: Enable GCS in static linked exe
+
+Use the ARCH_SETUP_TLS hook to enable GCS in the static linked case.
+The system call must be inlined and then GCS is enabled on a top
+level stack frame that does not return and has no exception handlers
+above it.
+---
+ sysdeps/unix/sysv/linux/aarch64/libc-start.h | 49 ++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+ create mode 100644 sysdeps/unix/sysv/linux/aarch64/libc-start.h
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/libc-start.h b/sysdeps/unix/sysv/linux/aarch64/libc-start.h
+new file mode 100644
+index 0000000000..ccf0f8af5c
+--- /dev/null
++++ b/sysdeps/unix/sysv/linux/aarch64/libc-start.h
+@@ -0,0 +1,49 @@
++/* AArch64 definitions for libc main startup.
++   Copyright (C) 2024 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#ifndef _LIBC_START_H
++#define _LIBC_START_H
++
++#ifndef SHARED
++
++# ifndef PR_SET_SHADOW_STACK_STATUS
++#  define PR_GET_SHADOW_STACK_STATUS	71
++#  define PR_SET_SHADOW_STACK_STATUS	72
++#  define PR_LOCK_SHADOW_STACK_STATUS	73
++#  define PR_SHADOW_STACK_ENABLE	(1UL << 0)
++#  define PR_SHADOW_STACK_WRITE		(1UL << 1)
++#  define PR_SHADOW_STACK_PUSH		(1UL << 2)
++# endif
++
++/* Must be on a top-level stack frame that does not return.  */
++static inline void __attribute__((always_inline))
++aarch64_libc_setup_tls (void)
++{
++  __libc_setup_tls ();
++
++  uint64_t s = GL(dl_aarch64_gcs);
++  if (s != 0)
++    INLINE_SYSCALL_CALL (prctl, PR_SET_SHADOW_STACK_STATUS, s, 0, 0, 0);
++}
++
++# define ARCH_SETUP_IREL() apply_irel ()
++# define ARCH_SETUP_TLS() aarch64_libc_setup_tls ()
++# define ARCH_APPLY_IREL()
++#endif /* ! SHARED  */
++
++#endif /* _LIBC_START_H  */
+-- 
+2.34.1
+
+
+From 7ea8526a50e6867b154d2bb4fbe9de4ff2fc9468 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 14 Jul 2023 15:49:11 +0100
+Subject: [PATCH 14/21] aarch64: Enable GCS in dynamic linked exe
+
+Use the dynamic linker start code to enable GCS in the dynamic linked
+case after _dl_start returns and before _dl_start_user which marks
+the point after which user code may run.
+
+Like in the static linked case this ensures that GCS is enabled on a
+top level stack frame.
+---
+ sysdeps/aarch64/Makefile                |  4 +++-
+ sysdeps/aarch64/dl-start.S              | 23 +++++++++++++++++++++--
+ sysdeps/aarch64/rtld-global-offsets.sym |  5 +++++
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/sysdeps/aarch64/Makefile b/sysdeps/aarch64/Makefile
+index 141d7d9cc2..ca8b96f550 100644
+--- a/sysdeps/aarch64/Makefile
++++ b/sysdeps/aarch64/Makefile
+@@ -35,7 +35,9 @@ endif
+ ifeq ($(subdir),elf)
+ sysdep-rtld-routines += dl-start
+ sysdep-dl-routines += tlsdesc dl-tlsdesc
+-gen-as-const-headers += dl-link.sym
++gen-as-const-headers += \
++  dl-link.sym \
++  rtld-global-offsets.sym
+ 
+ tests-internal += tst-ifunc-arg-1 tst-ifunc-arg-2
+ 
+diff --git a/sysdeps/aarch64/dl-start.S b/sysdeps/aarch64/dl-start.S
+index d645484e79..271bd5bf00 100644
+--- a/sysdeps/aarch64/dl-start.S
++++ b/sysdeps/aarch64/dl-start.S
+@@ -18,6 +18,7 @@
+    <https://www.gnu.org/licenses/>.  */
+ 
+ #include <sysdep.h>
++#include <rtld-global-offsets.h>
+ 
+ ENTRY (_start)
+ 	/* Create an initial frame with 0 LR and FP */
+@@ -25,11 +26,30 @@ ENTRY (_start)
+ 	mov	x29, #0
+ 	mov	x30, #0
+ 
++	/* Load and relocate all library dependencies.  */
+ 	mov	x0, sp
+ 	PTR_ARG (0)
+ 	bl	_dl_start
+ 	/* Returns user entry point in x0.  */
+ 	mov	PTR_REG (21), PTR_REG (0)
++
++	/* Use GL(dl_aarch64_gcs) to set the shadow stack status.  */
++	adrp	x16, _rtld_local
++	add	PTR_REG (16), PTR_REG (16), :lo12:_rtld_local
++	ldr	x1, [x16, GL_DL_AARCH64_GCS_OFFSET]
++	cbz	x1, L(skip_gcs_enable)
++
++	/* Enable GCS before user code runs.  Note that IFUNC resolvers and
++	   LD_AUDIT hooks may run before, but should not create threads.  */
++#define PR_SET_SHADOW_STACK_STATUS     72
++	mov	x0, PR_SET_SHADOW_STACK_STATUS
++	mov	x2, 0
++	mov	x3, 0
++	mov	x4, 0
++	mov	x8, #SYS_ify(prctl)
++	svc	0x0
++L(skip_gcs_enable):
++
+ .globl _dl_start_user
+ .type _dl_start_user, %function
+ _dl_start_user:
+@@ -40,8 +60,7 @@ _dl_start_user:
+ 	/* Compute envp.  */
+ 	add	PTR_REG (3), PTR_REG (2), PTR_REG (1), lsl PTR_LOG_SIZE
+ 	add	PTR_REG (3), PTR_REG (3), PTR_SIZE
+-	adrp	x16, _rtld_local
+-	add	PTR_REG (16), PTR_REG (16), :lo12:_rtld_local
++	/* Run the init functions of the loaded modules.  */
+ 	ldr	PTR_REG (0), [x16]
+ 	bl	_dl_init
+ 	/* Load the finalizer function.  */
+diff --git a/sysdeps/aarch64/rtld-global-offsets.sym b/sysdeps/aarch64/rtld-global-offsets.sym
+index 23cdaf7d9e..6c0690bb95 100644
+--- a/sysdeps/aarch64/rtld-global-offsets.sym
++++ b/sysdeps/aarch64/rtld-global-offsets.sym
+@@ -3,8 +3,13 @@
+ #include <ldsodefs.h>
+ 
+ #define GLRO_offsetof(name) offsetof (struct rtld_global_ro, _##name)
++#define GL_offsetof(name) offsetof (struct rtld_global, _##name)
+ 
+ -- Offsets of _rtld_global_ro in libc.so
+ 
+ GLRO_DL_HWCAP_OFFSET	GLRO_offsetof (dl_hwcap)
+ GLRO_DL_HWCAP2_OFFSET	GLRO_offsetof (dl_hwcap2)
++
++-- Offsets of _rtld_global in libc.so
++
++GL_DL_AARCH64_GCS_OFFSET	GL_offsetof (dl_aarch64_gcs)
+-- 
+2.34.1
+
+
+From 1e348038b0f013ef9c30e3c4072b9555344391cb Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 21 Dec 2023 15:14:08 +0000
+Subject: [PATCH 15/21] aarch64: add glibc.cpu.aarch64_gcs_policy
+
+policy sets how gcs tunable and gcs marking turns into gcs state:
+
+0: state = tunable
+1: state = marking ? tunable : (tunable && dlopen ? err : 0)
+2: state = marking ? tunable : (tunable ? err : 0)
+
+TODO: state lock
+---
+ sysdeps/aarch64/dl-tunables.list               |  5 +++++
+ sysdeps/unix/sysv/linux/aarch64/cpu-features.c |  9 +++++++--
+ sysdeps/unix/sysv/linux/aarch64/dl-procinfo.c  | 13 +++++++++++++
+ 3 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/sysdeps/aarch64/dl-tunables.list b/sysdeps/aarch64/dl-tunables.list
+index c08be86932..2a07a6216b 100644
+--- a/sysdeps/aarch64/dl-tunables.list
++++ b/sysdeps/aarch64/dl-tunables.list
+@@ -26,5 +26,10 @@ glibc {
+       minval: 0
+       default: 0
+     }
++    aarch64_gcs_policy {
++      type: UINT_64
++      minval: 0
++      default: 0
++    }
+   }
+ }
+diff --git a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
+index a8b6a4654a..bab5c32892 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
++++ b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
+@@ -130,6 +130,11 @@ init_cpu_features (struct cpu_features *cpu_features)
+   cpu_features->mops = GLRO (dl_hwcap2) & HWCAP2_MOPS;
+ 
+   if (GLRO (dl_hwcap2) & HWCAP2_GCS)
+-    /* GCS status may be updated later by binary compatibility checks.  */
+-    GL (dl_aarch64_gcs) = TUNABLE_GET (glibc, cpu, aarch64_gcs, uint64_t, 0);
++    {
++      /* GCS status may be updated later by binary compatibility checks.  */
++      GL (dl_aarch64_gcs) = TUNABLE_GET (glibc, cpu, aarch64_gcs, uint64_t, 0);
++      /* Fixed GCS policy.  */
++      GLRO (dl_aarch64_gcs_policy) =
++	TUNABLE_GET (glibc, cpu, aarch64_gcs_policy, uint64_t, 0);
++    }
+ }
+diff --git a/sysdeps/unix/sysv/linux/aarch64/dl-procinfo.c b/sysdeps/unix/sysv/linux/aarch64/dl-procinfo.c
+index 7af232de52..a9d5ee9df5 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/dl-procinfo.c
++++ b/sysdeps/unix/sysv/linux/aarch64/dl-procinfo.c
+@@ -54,6 +54,19 @@ PROCINFO_CLASS struct cpu_features _dl_aarch64_cpu_features
+ # else
+ ,
+ # endif
++# if !defined PROCINFO_DECL && defined SHARED
++  ._dl_aarch64_gcs_policy
++# else
++PROCINFO_CLASS uint64_t _dl_aarch64_gcs_policy
++# endif
++# ifndef PROCINFO_DECL
++= 0
++# endif
++# if !defined SHARED || defined PROCINFO_DECL
++;
++# else
++,
++# endif
+ #endif
+ 
+ /* Number of HWCAP bits set.  */
+-- 
+2.34.1
+
+
+From 92cd77cd36137d81ac9500f595f0c4d0c3c6539d Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 28 Dec 2023 18:31:32 +0000
+Subject: [PATCH 16/21] aarch64: use l_searchlist.r_list for bti
+
+Allows using the same function for static exe.
+---
+ sysdeps/aarch64/dl-bti.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/sysdeps/aarch64/dl-bti.c b/sysdeps/aarch64/dl-bti.c
+index fd0d308a39..e03bfc2acb 100644
+--- a/sysdeps/aarch64/dl-bti.c
++++ b/sysdeps/aarch64/dl-bti.c
+@@ -84,10 +84,9 @@ _dl_bti_check (struct link_map *l, const char *program)
+   if (l->l_mach.bti_fail)
+     bti_failed (l, program);
+ 
+-  unsigned int i = l->l_searchlist.r_nlist;
+-  while (i-- > 0)
++  for (unsigned int i = 0; i < l->l_searchlist.r_nlist; i++)
+     {
+-      struct link_map *dep = l->l_initfini[i];
++      struct link_map *dep = l->l_searchlist.r_list[i];
+       if (dep->l_mach.bti_fail)
+ 	bti_failed (dep, program);
+     }
+-- 
+2.34.1
+
+
+From deded666b363b18c93ee6baed7dcf32551158eca Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 21 Dec 2023 23:05:10 +0000
+Subject: [PATCH 17/21] aarch64: handling gcs marking
+
+---
+ sysdeps/aarch64/Makefile  |  4 ++-
+ sysdeps/aarch64/dl-gcs.c  | 59 +++++++++++++++++++++++++++++++++++++++
+ sysdeps/aarch64/dl-prop.h | 15 ++++++----
+ sysdeps/aarch64/linkmap.h |  1 +
+ 4 files changed, 73 insertions(+), 6 deletions(-)
+ create mode 100644 sysdeps/aarch64/dl-gcs.c
+
+diff --git a/sysdeps/aarch64/Makefile b/sysdeps/aarch64/Makefile
+index ca8b96f550..74479604f2 100644
+--- a/sysdeps/aarch64/Makefile
++++ b/sysdeps/aarch64/Makefile
+@@ -9,7 +9,9 @@ LDFLAGS-rtld += -Wl,-z,force-bti,--fatal-warnings
+ endif
+ 
+ ifeq ($(subdir),elf)
+-sysdep-dl-routines += dl-bti
++sysdep-dl-routines += \
++  dl-bti \
++  dl-gcs
+ 
+ tests += tst-audit26 \
+ 	 tst-audit27
+diff --git a/sysdeps/aarch64/dl-gcs.c b/sysdeps/aarch64/dl-gcs.c
+new file mode 100644
+index 0000000000..a92deb54b5
+--- /dev/null
++++ b/sysdeps/aarch64/dl-gcs.c
+@@ -0,0 +1,59 @@
++/* AArch64 GCS functions.
++   Copyright (C) 2024 Free Software Foundation, Inc.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, see
++   <https://www.gnu.org/licenses/>.  */
++
++#include <unistd.h>
++#include <errno.h>
++#include <libintl.h>
++#include <ldsodefs.h>
++
++static void
++fail (struct link_map *l, const char *program)
++{
++  if (program)
++    _dl_fatal_printf ("%s: %s: not GCS compatible\n", program, l->l_name);
++  else
++    _dl_signal_error (0, l->l_name, "dlopen", N_("not GCS compatible"));
++}
++
++static void
++check_gcs (struct link_map *l, const char *program)
++{
++  if (!l->l_mach.gcs)
++    {
++      if (GLRO(dl_aarch64_gcs_policy) == 2 || !program)
++	fail (l, program);
++      if (GLRO(dl_aarch64_gcs_policy) == 1 && program)
++	GL(dl_aarch64_gcs) = 0;
++    }
++}
++
++/* Apply GCS policy for L and its dependencies.  */
++
++void
++_dl_gcs_check (struct link_map *l, const char *program)
++{
++  /* GCS is disabled.  */
++  if (GL(dl_aarch64_gcs) == 0)
++    return;
++  /* GCS marking is ignored.  */
++  if (GLRO(dl_aarch64_gcs_policy) == 0)
++    return;
++
++  check_gcs (l, program);
++  for (unsigned int i = 0; i < l->l_searchlist.r_nlist; i++)
++    check_gcs (l->l_initfini[i], program);
++}
+diff --git a/sysdeps/aarch64/dl-prop.h b/sysdeps/aarch64/dl-prop.h
+index df05c0211d..72ac11aec0 100644
+--- a/sysdeps/aarch64/dl-prop.h
++++ b/sysdeps/aarch64/dl-prop.h
+@@ -24,16 +24,21 @@ extern void _dl_bti_protect (struct link_map *, int) attribute_hidden;
+ extern void _dl_bti_check (struct link_map *, const char *)
+     attribute_hidden;
+ 
++extern void _dl_gcs_check (struct link_map *, const char *)
++    attribute_hidden;
++
+ static inline void __attribute__ ((always_inline))
+ _rtld_main_check (struct link_map *m, const char *program)
+ {
+   _dl_bti_check (m, program);
++  _dl_gcs_check (m, program);
+ }
+ 
+ static inline void __attribute__ ((always_inline))
+ _dl_open_check (struct link_map *m)
+ {
+   _dl_bti_check (m, NULL);
++  _dl_gcs_check (m, NULL);
+ }
+ 
+ static inline void __attribute__ ((always_inline))
+@@ -45,10 +50,6 @@ static inline int
+ _dl_process_gnu_property (struct link_map *l, int fd, uint32_t type,
+ 			  uint32_t datasz, void *data)
+ {
+-  if (!GLRO(dl_aarch64_cpu_features).bti)
+-    /* Skip note processing.  */
+-    return 0;
+-
+   if (type == GNU_PROPERTY_AARCH64_FEATURE_1_AND)
+     {
+       /* Stop if the property note is ill-formed.  */
+@@ -57,7 +58,11 @@ _dl_process_gnu_property (struct link_map *l, int fd, uint32_t type,
+ 
+       unsigned int feature_1 = *(unsigned int *) data;
+       if (feature_1 & GNU_PROPERTY_AARCH64_FEATURE_1_BTI)
+-	_dl_bti_protect (l, fd);
++	if (GLRO(dl_aarch64_cpu_features).bti)
++	  _dl_bti_protect (l, fd);
++
++      if (feature_1 & GNU_PROPERTY_AARCH64_FEATURE_1_GCS)
++	l->l_mach.gcs = 1;
+ 
+       /* Stop if we processed the property note.  */
+       return 0;
+diff --git a/sysdeps/aarch64/linkmap.h b/sysdeps/aarch64/linkmap.h
+index 56a63fc3dd..423fc0bd8e 100644
+--- a/sysdeps/aarch64/linkmap.h
++++ b/sysdeps/aarch64/linkmap.h
+@@ -23,4 +23,5 @@ struct link_map_machine
+   ElfW(Addr) plt;	  /* Address of .plt */
+   void *tlsdesc_table;	  /* Address of TLS descriptor hash table.  */
+   bool bti_fail;	  /* Failed to enable Branch Target Identification.  */
++  bool gcs;		  /* Guarded Control Stack marking.  */
+ };
+-- 
+2.34.1
+
+
+From 5017a71252bd923b764b58cd61021b028c84d361 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Thu, 28 Dec 2023 18:32:02 +0000
+Subject: [PATCH 18/21] aarch64: use l_searchlist.r_list for gcs
+
+Allows using the same function for static exe.
+---
+ sysdeps/aarch64/dl-gcs.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sysdeps/aarch64/dl-gcs.c b/sysdeps/aarch64/dl-gcs.c
+index a92deb54b5..764b8a56e9 100644
+--- a/sysdeps/aarch64/dl-gcs.c
++++ b/sysdeps/aarch64/dl-gcs.c
+@@ -55,5 +55,5 @@ _dl_gcs_check (struct link_map *l, const char *program)
+ 
+   check_gcs (l, program);
+   for (unsigned int i = 0; i < l->l_searchlist.r_nlist; i++)
+-    check_gcs (l->l_initfini[i], program);
++    check_gcs (l->l_searchlist.r_list[i], program);
+ }
+-- 
+2.34.1
+
+
+From 84bfdb91bded2358b2642eed3bdae3c049576eb4 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 10 Jan 2024 16:20:24 +0000
+Subject: [PATCH 19/21] aarch64: ignore GCS property of ld.so
+
+ldso->l_mach.gcs may not be set up, just assume ldso is GCS compatible.
+---
+ sysdeps/aarch64/dl-gcs.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/sysdeps/aarch64/dl-gcs.c b/sysdeps/aarch64/dl-gcs.c
+index 764b8a56e9..b81aa30787 100644
+--- a/sysdeps/aarch64/dl-gcs.c
++++ b/sysdeps/aarch64/dl-gcs.c
+@@ -32,6 +32,11 @@ fail (struct link_map *l, const char *program)
+ static void
+ check_gcs (struct link_map *l, const char *program)
+ {
++#ifdef SHARED
++  /* Ignore GCS marking on ld.so: its properties are not processed.  */
++  if (l->l_real == &GL(dl_rtld_map))
++    return;
++#endif
+   if (!l->l_mach.gcs)
+     {
+       if (GLRO(dl_aarch64_gcs_policy) == 2 || !program)
+-- 
+2.34.1
+
+
+From fcdce58087260a68d1a74b28e5b0146e69511f16 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 27 Dec 2023 17:17:11 +0000
+Subject: [PATCH 20/21] aarch64: process gnu properties in static exe
+
+---
+ sysdeps/unix/sysv/linux/aarch64/libc-start.h | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/sysdeps/unix/sysv/linux/aarch64/libc-start.h b/sysdeps/unix/sysv/linux/aarch64/libc-start.h
+index ccf0f8af5c..6e2e9762ee 100644
+--- a/sysdeps/unix/sysv/linux/aarch64/libc-start.h
++++ b/sysdeps/unix/sysv/linux/aarch64/libc-start.h
+@@ -21,6 +21,8 @@
+ 
+ #ifndef SHARED
+ 
++# include <dl-prop.h>
++
+ # ifndef PR_SET_SHADOW_STACK_STATUS
+ #  define PR_GET_SHADOW_STACK_STATUS	71
+ #  define PR_SET_SHADOW_STACK_STATUS	72
+@@ -36,6 +38,16 @@ aarch64_libc_setup_tls (void)
+ {
+   __libc_setup_tls ();
+ 
++  struct link_map *main_map = _dl_get_dl_main_map ();
++  const ElfW(Phdr) *phdr = GL(dl_phdr);
++  const ElfW(Phdr) *ph;
++  for (ph = phdr; ph < phdr + GL(dl_phnum); ph++)
++    if (ph->p_type == PT_GNU_PROPERTY)
++      {
++	_dl_process_pt_gnu_property (main_map, -1, ph);
++	_rtld_main_check (main_map, _dl_argv[0]);
++	break;
++      }
+   uint64_t s = GL(dl_aarch64_gcs);
+   if (s != 0)
+     INLINE_SYSCALL_CALL (prctl, PR_SET_SHADOW_STACK_STATUS, s, 0, 0, 0);
+-- 
+2.34.1
+
+
+From bea263f87c18cc7949b556db73883a209edd27dc Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Wed, 14 Feb 2024 15:06:40 +0000
+Subject: [PATCH 21/21] doc: add plain text readme for using GCS
+
+---
+ README | 69 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+
+diff --git a/README b/README
+index 2e360eb70a..061818d51b 100644
+--- a/README
++++ b/README
+@@ -1,3 +1,72 @@
++this branch contains experimental GCS support (not ABI stable)
++
++source and branches
++-------------------
++
++binutils-gdb: upstream-git users/ARM/gcs-binutils-gdb-master
++gcc (trunk): upstream-git vendors/ARM/gcs
++gcc (gcc-13): upstream-git vendors/ARM/gcs-13
++	note: gcc vendor branches need setup https://gcc.gnu.org/gitwrite.html#vendor
++glibc: upstream-git arm/gcs
++linux: https://git.kernel.org/pub/scm/linux/kernel/git/broonie/misc.git arm64-gcs
++fvp fast model can be used for testing.
++
++toolchain build
++---------------
++
++two options:
++
++(1) branch-protect by default
++  configure gcc with --enable-standard-branch-protection
++  and build glibc normally
++
++(2) do not branch-protect by default, require explicit cflags
++  configure gcc with
++    CFLAGS_FOR_TARGET='-O2 -mbranch-protection=standard'
++    CXXFLAGS_FOR_TARGET='-O2 -mbranch-protection=standard'
++  and configure glibc with
++    CFLAGS='-g -O2 -mbranch-protection=standard'
++  build user code with
++    CFLAGS+=-mbranch-protection=standard
++    (equivalent to -mbranch-protection=bti+pac+gcs)
++
++linking
++-------
++
++use ldflags:
++
++-z experimental-gcs={always,never,implicit}
++  always: force GCS marking on
++  never: force GCS marking off
++  implicit: mark output if all inputs are marked (default)
++
++-z experimental-gcs-report={none,warning,error}
++  none: silent (default)
++  warning: when output is marked, unmarked input is a warning
++  error: when output is marked, unmarked input is an error
++
++runtime
++-------
++
++run with environment var
++
++  GLIBC_TUNABLES=glibc.cpu.aarch64_gcs=1:glibc.cpu.aarch64_gcs_policy=2
++
++by default both tunables are 0, the meaning is
++
++glibc.cpu.aarch64_gcs_policy=0:
++  GCS is enabled if glibc.cpu.aarch64_gcs is set
++glibc.cpu.aarch64_gcs_policy=1:
++  GCS is enabled if glibc.cpu.aarch64_gcs is set and binary is marked
++  if GCS is enabled an incompatible dlopen is an error
++glibc.cpu.aarch64_gcs_policy=2:
++  GCS is enabled if glibc.cpu.aarch64_gcs is set
++  if GCS is enabled any incompatible binary is an error
++
++
++original readme
++---------------
++
+ This directory contains the sources of the GNU C Library.
+ See the file "version.h" for what release version you have.
+ 
+-- 
+2.34.1
+

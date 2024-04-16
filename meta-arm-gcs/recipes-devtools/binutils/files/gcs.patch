@@ -1,0 +1,973 @@
+From afe69c2e274db719e1835ee112150012271b62b7 Mon Sep 17 00:00:00 2001
+From: Srinath Parvathaneni <srinath.parvathaneni@arm.com>
+Date: Tue, 30 Jan 2024 08:59:53 +0000
+Subject: [PATCH] aarch64: Add support for GCS in AArch64 linker.
+
+This patch adds support for GCS in AArch64 linker.
+
+This patch implements the following:
+1) Defines GNU_PROPERTY_AARCH64_FEATURE_1_GCS bit for GCS in
+GNU_PROPERTY_AARCH64_FEATURE_1_AND macro.
+
+2) Adds readelf support to read and print the GNU properties
+in AArch64.
+
+Displaying notes found in: .note.gnu.property
+[      ]+Owner[        ]+Data size[    ]+Description
+  GNU                  0x00000010      NT_GNU_PROPERTY_TYPE_0
+      Properties: AArch64 feature: GCS
+
+3) Adds support for -z experimental-gcs linker option and document
+all the values allowed with option (-z experimental-gcs[=always|never|implicit]).
+-z experimental-gcs is equivalent to -z experimental-gcs=always and
+when option is not passed in the command line, it defaults to implicit.
+
+4) Adds support for -z experimental-gcs-report linker option and document
+all the values allowed with this option (-z experimental-gcs-report[=none|warning|error]).
+-z experimental-gcs-report is equivalent to -z experimental-gcs-report=none
+and when option is not passed in the command line, it defaults to none.
+
+The ABI changes adding GNU_PROPERTY_AARCH64_FEATURE_1_GCS to the
+GNU property GNU_PROPERTY_AARCH64_FEATURE_1_AND is merged into main and
+can be found below.
+https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst
+
+Upstream-Status: Pending [https://sourceware.org/git/?p=binutils-gdb.git;a=shortlog;h=refs/heads/users/ARM/gcs-binutils-gdb-master]
+Signed-off-by: Ross Burton <ross.burton@arm.com>
+---
+ bfd/elfnn-aarch64.c                         | 87 +++++++++++++++++----
+ bfd/elfxx-aarch64.c                         | 37 ++++++++-
+ bfd/elfxx-aarch64.h                         | 36 +++++++--
+ binutils/readelf.c                          |  4 +
+ include/elf/common.h                        |  1 +
+ ld/emultempl/aarch64elf.em                  | 45 ++++++++++-
+ ld/testsuite/ld-aarch64/aarch64-elf.exp     | 23 ++++++
+ ld/testsuite/ld-aarch64/property-bti-pac1.d |  2 +-
+ ld/testsuite/ld-aarch64/property-bti-pac1.s | 14 ++++
+ ld/testsuite/ld-aarch64/property-gcs.s      | 25 ++++++
+ ld/testsuite/ld-aarch64/property-gcs1.d     |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs10.d    |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs11.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs12.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs13.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs14.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs15.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs16.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs17.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs18.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs19.d    |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs2.d     | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs2.s     | 33 ++++++++
+ ld/testsuite/ld-aarch64/property-gcs20.d    |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs21.d    |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs22.d    | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs3.d     | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs4.d     | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs5.d     | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs6.d     | 12 +++
+ ld/testsuite/ld-aarch64/property-gcs7.d     |  6 ++
+ ld/testsuite/ld-aarch64/property-gcs8.d     | 11 +++
+ ld/testsuite/ld-aarch64/property-gcs9.d     | 12 +++
+ 33 files changed, 495 insertions(+), 26 deletions(-)
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs.s
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs1.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs10.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs11.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs12.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs13.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs14.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs15.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs16.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs17.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs18.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs19.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs2.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs2.s
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs20.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs21.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs22.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs3.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs4.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs5.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs6.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs7.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs8.d
+ create mode 100644 ld/testsuite/ld-aarch64/property-gcs9.d
+
+diff --git a/bfd/elfnn-aarch64.c b/bfd/elfnn-aarch64.c
+index 109517db4aa..428f2c3507d 100644
+--- a/bfd/elfnn-aarch64.c
++++ b/bfd/elfnn-aarch64.c
+@@ -2546,6 +2546,12 @@ struct elf_aarch64_obj_tdata
+      GNU_PROPERTY_AARCH64_FEATURE_1_BTI.  */
+   int no_bti_warn;
+ 
++  /* Mark ouput with GCS based on -z experimental-gcs.  */
++  aarch64_gcs_type gcs_type;
++  /* Report linker warning/error for -z experimental-gcs-report based on
++     -z experimental-gcs.  */
++  aarch64_gcs_report gcs_report;
++
+   /* PLT type based on security.  */
+   aarch64_plt_type plt_type;
+ };
+@@ -5011,7 +5017,7 @@ bfd_elfNN_aarch64_set_options (struct bfd *output_bfd,
+ 			       int fix_erratum_835769,
+ 			       erratum_84319_opts fix_erratum_843419,
+ 			       int no_apply_dynamic_relocs,
+-			       aarch64_bti_pac_info bp_info)
++			       aarch64_gnu_prop_info bp_info)
+ {
+   struct elf_aarch64_link_hash_table *globals;
+ 
+@@ -5039,6 +5045,24 @@ bfd_elfNN_aarch64_set_options (struct bfd *output_bfd,
+     default:
+       break;
+     }
++
++  switch (bp_info.gcs_type)
++    {
++    case GCS_ALWAYS:
++      elf_aarch64_tdata (output_bfd)->gnu_and_prop
++	|= GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
++      break;
++    case GCS_NEVER:
++      elf_aarch64_tdata (output_bfd)->gnu_and_prop
++	&= ~GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
++      break;
++
++    default:
++      break;
++    }
++
++  elf_aarch64_tdata (output_bfd)->gcs_type = bp_info.gcs_type;
++  elf_aarch64_tdata (output_bfd)->gcs_report = bp_info.gcs_report;
+   elf_aarch64_tdata (output_bfd)->plt_type = bp_info.plt_type;
+   setup_plt_values (link_info, bp_info.plt_type);
+ }
+@@ -10196,7 +10220,12 @@ static bfd *
+ elfNN_aarch64_link_setup_gnu_properties (struct bfd_link_info *info)
+ {
+   uint32_t prop = elf_aarch64_tdata (info->output_bfd)->gnu_and_prop;
+-  bfd *pbfd = _bfd_aarch64_elf_link_setup_gnu_properties (info, &prop);
++  aarch64_gcs_report gcs_report
++    = elf_aarch64_tdata (info->output_bfd)->gcs_report;
++  aarch64_gcs_report gcs_type
++    = elf_aarch64_tdata (info->output_bfd)->gcs_type;
++  bfd *pbfd = _bfd_aarch64_elf_link_setup_gnu_properties (info, &prop,
++							  gcs_report, gcs_type);
+   elf_aarch64_tdata (info->output_bfd)->gnu_and_prop = prop;
+   elf_aarch64_tdata (info->output_bfd)->plt_type
+     |= (prop & GNU_PROPERTY_AARCH64_FEATURE_1_BTI) ? PLT_BTI : 0;
+@@ -10215,30 +10244,54 @@ elfNN_aarch64_merge_gnu_properties (struct bfd_link_info *info,
+ {
+   uint32_t prop
+     = elf_aarch64_tdata (info->output_bfd)->gnu_and_prop;
++  aarch64_gcs_report gcs_report
++    = elf_aarch64_tdata (info->output_bfd)->gcs_report;
++  aarch64_gcs_type gcs_type
++    = elf_aarch64_tdata (info->output_bfd)->gcs_type;
+ 
+-  /* If output has been marked with BTI using command line argument, give out
+-     warning if necessary.  */
+   /* Properties are merged per type, hence only check for warnings when merging
+      GNU_PROPERTY_AARCH64_FEATURE_1_AND.  */
+-  if (((aprop && aprop->pr_type == GNU_PROPERTY_AARCH64_FEATURE_1_AND)
++  if ((aprop && aprop->pr_type == GNU_PROPERTY_AARCH64_FEATURE_1_AND)
+ 	|| (bprop && bprop->pr_type == GNU_PROPERTY_AARCH64_FEATURE_1_AND))
+-      && (prop & GNU_PROPERTY_AARCH64_FEATURE_1_BTI)
+-      && (!elf_aarch64_tdata (info->output_bfd)->no_bti_warn))
+     {
+-      if ((aprop && !(aprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_BTI))
+-	   || !aprop)
++      /* If output has been marked with BTI using command line argument, give
++	 out warning if necessary.  */
++      if ((prop & GNU_PROPERTY_AARCH64_FEATURE_1_BTI)
++	  && (!elf_aarch64_tdata (info->output_bfd)->no_bti_warn))
+ 	{
+-	  _bfd_error_handler (_("%pB: warning: BTI turned on by -z force-bti when "
+-				"all inputs do not have BTI in NOTE section."),
+-			      abfd);
++	  if ((aprop && !(aprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_BTI))
++	      || !aprop)
++	    {
++	      _bfd_error_handler (_("%pB: warning: BTI turned on by -z "
++				  "force-bti when all inputs do not have BTI "
++				  "in NOTE section."), abfd);
++	    }
++	  if ((bprop && !(bprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_BTI))
++	      || !bprop)
++	    {
++	      _bfd_error_handler (_("%pB: warning: BTI turned on by -z "
++				  "force-bti when all inputs do not have BTI "
++				  "in NOTE section."), bbfd);
++	    }
+ 	}
+-      if ((bprop && !(bprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_BTI))
+-	   || !bprop)
++
++      /* If output has been marked with GCS using -z experimental-gcs and input
++	 is missing GCS marking throw warning/error on
++	 -z experimental-gcs-report=warning/error.  */
++      if ((prop & GNU_PROPERTY_AARCH64_FEATURE_1_GCS) && gcs_report != GCS_NONE)
+ 	{
+-	  _bfd_error_handler (_("%pB: warning: BTI turned on by -z force-bti when "
+-				"all inputs do not have BTI in NOTE section."),
+-			      bbfd);
++	  if ((aprop && !(aprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_GCS))
++	      || !aprop)
++	    _bfd_aarch64_elf_check_gcs_report (gcs_report, abfd);
++	  if ((bprop && !(bprop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_GCS))
++	      || !bprop)
++	    _bfd_aarch64_elf_check_gcs_report (gcs_report, bbfd);
+ 	}
++
++      if (gcs_type == GCS_NEVER && aprop != NULL)
++	aprop->u.number &= ~GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
++      if (gcs_type == GCS_NEVER && bprop != NULL)
++	bprop->u.number &= ~GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
+     }
+ 
+   return  _bfd_aarch64_elf_merge_gnu_properties (info, abfd, aprop,
+diff --git a/bfd/elfxx-aarch64.c b/bfd/elfxx-aarch64.c
+index d1279adc2e4..dd64f2067ac 100644
+--- a/bfd/elfxx-aarch64.c
++++ b/bfd/elfxx-aarch64.c
+@@ -702,7 +702,9 @@ _bfd_aarch64_elf_write_core_note (bfd *abfd, char *buf, int *bufsiz, int note_ty
+    GPROP accordingly.  */
+ bfd *
+ _bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *info,
+-					    uint32_t *gprop)
++					    uint32_t *gprop,
++					    aarch64_gcs_report gcs_report,
++					    aarch64_gcs_type gcs_type)
+ {
+   asection *sec;
+   bfd *pbfd;
+@@ -738,6 +740,11 @@ _bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *info,
+ 	    _bfd_error_handler (_("%pB: warning: BTI turned on by -z force-bti "
+ 				  "when all inputs do not have BTI in NOTE "
+ 				  "section."), ebfd);
++
++      if ((gnu_prop & GNU_PROPERTY_AARCH64_FEATURE_1_GCS)
++	  && !(prop->u.number & GNU_PROPERTY_AARCH64_FEATURE_1_GCS))
++	_bfd_aarch64_elf_check_gcs_report (gcs_report, ebfd);
++
+       prop->u.number |= gnu_prop;
+       prop->pr_kind = property_number;
+ 
+@@ -765,6 +772,14 @@ _bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *info,
+ 	  elf_section_type (sec) = SHT_NOTE;
+ 	}
+     }
++  else if (ebfd != NULL && gcs_type == GCS_NEVER)
++    {
++      prop = _bfd_elf_get_property (ebfd, GNU_PROPERTY_AARCH64_FEATURE_1_AND,
++				    4);
++      prop->u.number &= ~GNU_PROPERTY_AARCH64_FEATURE_1_GCS;
++      if (prop->u.number == 0)
++	prop->pr_kind = property_remove;
++    }
+ 
+   pbfd = _bfd_elf_link_setup_gnu_properties (info);
+ 
+@@ -785,7 +800,8 @@ _bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *info,
+ 	    {
+ 	      gnu_prop = (p->property.u.number
+ 			  & (GNU_PROPERTY_AARCH64_FEATURE_1_PAC
+-			      | GNU_PROPERTY_AARCH64_FEATURE_1_BTI));
++			      | GNU_PROPERTY_AARCH64_FEATURE_1_BTI
++			      | GNU_PROPERTY_AARCH64_FEATURE_1_GCS));
+ 	      break;
+ 	    }
+ 	  else if (GNU_PROPERTY_AARCH64_FEATURE_1_AND < p->property.pr_type)
+@@ -922,3 +938,20 @@ _bfd_aarch64_elf_link_fixup_gnu_properties
+ 	}
+     }
+ }
++
++/* Check AArch64 GCS report.  */
++void
++_bfd_aarch64_elf_check_gcs_report (aarch64_gcs_report gcs_report, bfd *ebfd)
++{
++  if (gcs_report == GCS_WARN)
++    _bfd_error_handler (_("%pB: warning: GCS turned on by -z experimental-gcs "
++			"on the output when all inputs do not have GCS in NOTE "
++			"section."), ebfd);
++  else if (gcs_report == GCS_ERROR)
++    {
++      _bfd_error_handler (_("%pB: error: GCS turned on by -z experimental-gcs "
++			  "on the output when all inputs do not have GCS in "
++			  "NOTE section."), ebfd);
++      _exit (EXIT_FAILURE);
++    }
++}
+diff --git a/bfd/elfxx-aarch64.h b/bfd/elfxx-aarch64.h
+index 6c084f75796..ca523d81df1 100644
+--- a/bfd/elfxx-aarch64.h
++++ b/bfd/elfxx-aarch64.h
+@@ -46,6 +46,27 @@ typedef enum
+   BTI_WARN	= 1,  /* BTI is enabled with -z force-bti.  */
+ } aarch64_enable_bti_type;
+ 
++/* To indicate whether GNU_PROPERTY_AARCH64_FEATURE_1_GCS bit is
++   enabled/disabled on the output when -z experimental-gcs linker
++   command line option is passed.  */
++typedef enum
++{
++  GCS_NEVER	= 0,  /* gcs is disabled on output.  */
++  GCS_IMPLICIT  = 1,  /* gcs is deduced from input object.  */
++  GCS_ALWAYS	= 2,  /* gsc is enabled on output.  */
++} aarch64_gcs_type;
++
++/* To indicate whether to generate linker warning/errors for
++   -z experimental-gcs-report when -z experimental-gcs=always is passed.  */
++typedef enum
++{
++  GCS_NONE	= 0,  /* Does not emit any warning/error messages.  */
++  GCS_WARN	= 1,  /* Emit warning when the input objects are missing gcs
++			 markings and output have gcs marking.  */
++  GCS_ERROR	= 2,  /* Emit error when the input objects are missing gcs
++			 markings and output have gcs marking.  */
++} aarch64_gcs_report;
++
+ /* A structure to encompass all information coming from BTI or PAC
+    related command line options.  This involves the "PLT_TYPE" to determine
+    which version of PLTs to pick and "BTI_TYPE" to determine if
+@@ -54,7 +75,9 @@ typedef struct
+ {
+   aarch64_plt_type plt_type;
+   aarch64_enable_bti_type bti_type;
+-} aarch64_bti_pac_info;
++  aarch64_gcs_type gcs_type;
++  aarch64_gcs_report gcs_report;
++} aarch64_gnu_prop_info;
+ 
+ /* An enum to define what kind of erratum fixes we should apply.  This gives the
+    user a bit more control over the sequences we generate.  */
+@@ -67,11 +90,11 @@ typedef enum
+ 
+ extern void bfd_elf64_aarch64_set_options
+   (bfd *, struct bfd_link_info *, int, int, int, int, erratum_84319_opts, int,
+-   aarch64_bti_pac_info);
++   aarch64_gnu_prop_info);
+ 
+ extern void bfd_elf32_aarch64_set_options
+   (bfd *, struct bfd_link_info *, int, int, int, int, erratum_84319_opts, int,
+-   aarch64_bti_pac_info);
++   aarch64_gnu_prop_info);
+ 
+ /* AArch64 stub generation support for ELF64.  Called from the linker.  */
+ extern int elf64_aarch64_setup_section_lists
+@@ -135,8 +158,9 @@ _bfd_aarch64_elf_write_core_note (bfd *, char *, int *, int, ...);
+ #define elf_backend_write_core_note	_bfd_aarch64_elf_write_core_note
+ 
+ extern bfd *
+-_bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *,
+-					    uint32_t *);
++_bfd_aarch64_elf_link_setup_gnu_properties (struct bfd_link_info *, uint32_t *,
++					    aarch64_gcs_report,
++					    aarch64_gcs_type);
+ 
+ extern enum elf_property_kind
+ _bfd_aarch64_elf_parse_gnu_properties (bfd *, unsigned int,
+@@ -146,6 +170,8 @@ extern bool
+ _bfd_aarch64_elf_merge_gnu_properties (struct bfd_link_info *, bfd *,
+ 				       elf_property *, elf_property *,
+ 				       uint32_t);
++extern void
++_bfd_aarch64_elf_check_gcs_report (aarch64_gcs_report, bfd *);
+ 
+ extern void
+ _bfd_aarch64_elf_link_fixup_gnu_properties (struct bfd_link_info *,
+diff --git a/binutils/readelf.c b/binutils/readelf.c
+index 5e4ad6ea6ad..794cbb77a9c 100644
+--- a/binutils/readelf.c
++++ b/binutils/readelf.c
+@@ -20636,6 +20636,10 @@ decode_aarch64_feature_1_and (unsigned int bitmask)
+ 	  printf ("PAC");
+ 	  break;
+ 
++	case GNU_PROPERTY_AARCH64_FEATURE_1_GCS:
++	  printf ("GCS");
++	  break;
++
+ 	default:
+ 	  printf (_("<unknown: %x>"), bit);
+ 	  break;
+diff --git a/include/elf/common.h b/include/elf/common.h
+index 6a66456cd22..289b8821b7d 100644
+--- a/include/elf/common.h
++++ b/include/elf/common.h
+@@ -1001,6 +1001,7 @@
+ 
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
+ #define GNU_PROPERTY_AARCH64_FEATURE_1_PAC	(1U << 1)
++#define GNU_PROPERTY_AARCH64_FEATURE_1_GCS	(1U << 2)
+ 
+ /* Values used in GNU .note.ABI-tag notes (NT_GNU_ABI_TAG).  */
+ #define GNU_ABI_TAG_LINUX	0
+diff --git a/ld/emultempl/aarch64elf.em b/ld/emultempl/aarch64elf.em
+index b647909ae63..fb331e06553 100644
+--- a/ld/emultempl/aarch64elf.em
++++ b/ld/emultempl/aarch64elf.em
+@@ -36,6 +36,12 @@ static erratum_84319_opts fix_erratum_843419 = ERRAT_NONE;
+ static int no_apply_dynamic_relocs = 0;
+ static aarch64_plt_type plt_type = PLT_NORMAL;
+ static aarch64_enable_bti_type bti_type = BTI_NONE;
++static aarch64_gcs_type gcs_type = GCS_IMPLICIT;
++static aarch64_gcs_report gcs_report = GCS_NONE;
++static const char * egr = "experimental-gcs-report";
++static const char * eg = "experimental-gcs";
++#define EGR_LEN strlen (egr)
++#define EG_LEN strlen (eg)
+ 
+ static void
+ gld${EMULATION_NAME}_before_parse (void)
+@@ -321,9 +327,11 @@ aarch64_elf_create_output_section_statements (void)
+       return;
+     }
+ 
+-  aarch64_bti_pac_info bp_info;
++  aarch64_gnu_prop_info bp_info;
+   bp_info.plt_type = plt_type;
+   bp_info.bti_type = bti_type;
++  bp_info.gcs_type = gcs_type;
++  bp_info.gcs_report = gcs_report;
+ 
+   bfd_elf${ELFSIZE}_aarch64_set_options (link_info.output_bfd, &link_info,
+ 				 no_enum_size_warning,
+@@ -408,6 +416,19 @@ PARSE_AND_LIST_OPTIONS='
+   fprintf (file, _("  --no-apply-dynamic-relocs    Do not apply link-time values for dynamic relocations\n"));
+   fprintf (file, _("  -z force-bti                  Turn on Branch Target Identification mechanism and generate PLTs with BTI. Generate warnings for missing BTI on inputs\n"));
+   fprintf (file, _("  -z pac-plt                    Protect PLTs with Pointer Authentication.\n"));
++  fprintf (file, _("\
++  -z experimental-gcs[=always|never|implicit]		Turn on Guarded Control Stack(gcs) mechanism on the output.\n\
++							implicit(default): deduce gcs from input objects.\n\
++							always: always marks the output with gcs.\n\
++							never: never marks the output with gcs.\n"));
++  fprintf (file, _("\
++  -z experimental-gcs-report[=none|warning|error]	Emit warning/error on mismatch of gcs marking between input objects and ouput.\n\
++							none (default): Does not emit any warning/error messages.\n\
++							warning: Emit warning when the input objects are missing gcs markings\n\
++								 and output have gcs marking.\n\
++							error: Emit error when the input objects are missing gcs markings\n\
++							       and output have gcs marking.\n"));
++
+ '
+ 
+ PARSE_AND_LIST_ARGS_CASE_Z_AARCH64='
+@@ -418,6 +439,28 @@ PARSE_AND_LIST_ARGS_CASE_Z_AARCH64='
+ 	}
+       else if (strcmp (optarg, "pac-plt") == 0)
+ 	plt_type |= PLT_PAC;
++     else if (strncmp (optarg, egr, EGR_LEN) == 0)
++	{
++	  if (strlen (optarg) == EGR_LEN || strcmp (optarg + EGR_LEN, "=none") == 0)
++	    gcs_report = GCS_NONE;
++	  else if (strcmp (optarg + EGR_LEN, "=warning") == 0)
++	    gcs_report = GCS_WARN;
++	  else if (strcmp (optarg + EGR_LEN, "=error") == 0)
++	    gcs_report = GCS_ERROR;
++	  else
++	    einfo (_("%P: error: unrecognized: `%s'\''\n"), optarg);
++	}
++     else if (strncmp (optarg, eg, EG_LEN) == 0)
++	{
++	  if (strlen (optarg) == EG_LEN || strcmp (optarg + EG_LEN, "=always") == 0)
++	    gcs_type = GCS_ALWAYS;
++	  else if (strcmp (optarg + EG_LEN, "=never") == 0)
++	    gcs_type = GCS_NEVER;
++	  else if (strcmp (optarg + EG_LEN, "=implicit") == 0)
++	    gcs_type = GCS_IMPLICIT;
++	  else
++	    einfo (_("%P: error: unrecognized: `%s'\''\n"), optarg);
++	}
+ '
+ PARSE_AND_LIST_ARGS_CASE_Z="$PARSE_AND_LIST_ARGS_CASE_Z $PARSE_AND_LIST_ARGS_CASE_Z_AARCH64"
+ 
+diff --git a/ld/testsuite/ld-aarch64/aarch64-elf.exp b/ld/testsuite/ld-aarch64/aarch64-elf.exp
+index 9ce61579e6c..31abc5a07d8 100644
+--- a/ld/testsuite/ld-aarch64/aarch64-elf.exp
++++ b/ld/testsuite/ld-aarch64/aarch64-elf.exp
+@@ -471,3 +471,26 @@ run_dump_test_lp64 "bti-far-3"
+ if { ![skip_sframe_tests] } {
+   run_dump_test "sframe-simple-1"
+ }
++
++run_dump_test "property-gcs1"
++run_dump_test "property-gcs2"
++run_dump_test "property-gcs3"
++run_dump_test "property-gcs4"
++run_dump_test "property-gcs5"
++run_dump_test "property-gcs6"
++run_dump_test "property-gcs7"
++run_dump_test "property-gcs8"
++run_dump_test "property-gcs9"
++run_dump_test "property-gcs10"
++run_dump_test "property-gcs11"
++run_dump_test "property-gcs12"
++run_dump_test "property-gcs13"
++run_dump_test "property-gcs14"
++run_dump_test "property-gcs15"
++run_dump_test "property-gcs16"
++run_dump_test "property-gcs17"
++run_dump_test "property-gcs18"
++run_dump_test "property-gcs19"
++run_dump_test "property-gcs20"
++run_dump_test "property-gcs21"
++run_dump_test "property-gcs22"
+diff --git a/ld/testsuite/ld-aarch64/property-bti-pac1.d b/ld/testsuite/ld-aarch64/property-bti-pac1.d
+index 59fa695165a..c28a0cbf850 100644
+--- a/ld/testsuite/ld-aarch64/property-bti-pac1.d
++++ b/ld/testsuite/ld-aarch64/property-bti-pac1.d
+@@ -8,4 +8,4 @@
+ Displaying notes found in: .note.gnu.property
+ [ 	]+Owner[ 	]+Data size[ 	]+Description
+   GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
+-      Properties: AArch64 feature: BTI, PAC
++      Properties: AArch64 feature: BTI, PAC, GCS
+diff --git a/ld/testsuite/ld-aarch64/property-bti-pac1.s b/ld/testsuite/ld-aarch64/property-bti-pac1.s
+index 414c9277f1d..42156917d58 100644
+--- a/ld/testsuite/ld-aarch64/property-bti-pac1.s
++++ b/ld/testsuite/ld-aarch64/property-bti-pac1.s
+@@ -12,6 +12,20 @@ _start:
+ 	.long 5f - 2f		/* data length */
+ 	.long 5			/* note type */
+ 0:	.asciz "GNU"		/* vendor name */
++1:
++	.p2align 3
++2:	.long 0xc0000000	/* pr_type.  */
++	.long 4f - 3f		/* pr_datasz.  */
++3:
++	.long 0x4		/* GCS.  */
++4:
++	.p2align 3
++5:
++	.p2align 3
++	.long 1f - 0f		/* name length */
++	.long 5f - 2f		/* data length */
++	.long 5			/* note type */
++0:	.asciz "GNU"		/* vendor name */
+ 1:
+ 	.p2align 3
+ 2:	.long 0xc0000000	/* pr_type.  */
+diff --git a/ld/testsuite/ld-aarch64/property-gcs.s b/ld/testsuite/ld-aarch64/property-gcs.s
+new file mode 100644
+index 00000000000..bc7e66e8933
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs.s
+@@ -0,0 +1,25 @@
++	.text
++	.globl _start
++	.type _start,@function
++_start:
++	mov x1, #2
++.ifndef __mult__
++	bl foo
++.endif
++.ifdef __property_gcs__
++	.section ".note.gnu.property", "a"
++	.p2align 3
++	.long 1f - 0f		/* name length */
++	.long 5f - 2f		/* data length */
++	.long 5			/* note type */
++0:	.asciz "GNU"		/* vendor name */
++1:
++	.p2align 3
++2:	.long 0xc0000000	/* pr_type.  */
++	.long 4f - 3f		/* pr_datasz.  */
++3:
++	.long 0x4		/* GCS.  */
++4:
++	.p2align 3
++5:
++.endif
+diff --git a/ld/testsuite/ld-aarch64/property-gcs1.d b/ld/testsuite/ld-aarch64/property-gcs1.d
+new file mode 100644
+index 00000000000..c724ac56ca3
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs1.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input without gcs)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -shared
++#readelf: -n
+diff --git a/ld/testsuite/ld-aarch64/property-gcs10.d b/ld/testsuite/ld-aarch64/property-gcs10.d
+new file mode 100644
+index 00000000000..4b6deedc0c2
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs10.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs=always experimental-gcs-report=error)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=always -z experimental-gcs-report=error
++#error: .*property-gcs.*: error: GCS turned on by -z experimental-gcs on the output when all inputs do not have GCS in NOTE section.
+diff --git a/ld/testsuite/ld-aarch64/property-gcs11.d b/ld/testsuite/ld-aarch64/property-gcs11.d
+new file mode 100644
+index 00000000000..8abacf28eb1
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs11.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs output forced with experimental-gcs)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs12.d b/ld/testsuite/ld-aarch64/property-gcs12.d
+new file mode 100644
+index 00000000000..0fe246dfa3a
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs12.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs=always)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=always
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs13.d b/ld/testsuite/ld-aarch64/property-gcs13.d
+new file mode 100644
+index 00000000000..c6077aeaa5a
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs13.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs experimental-gcs-report=none)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs -z experimental-gcs-report=none
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs14.d b/ld/testsuite/ld-aarch64/property-gcs14.d
+new file mode 100644
+index 00000000000..0f7490ef4a5
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs14.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs experimental-gcs-report=warning)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs -z experimental-gcs-report=warning
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs15.d b/ld/testsuite/ld-aarch64/property-gcs15.d
+new file mode 100644
+index 00000000000..d1e723e0ea6
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs15.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs experimental-gcs-report=error)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs -z experimental-gcs-report=error
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs16.d b/ld/testsuite/ld-aarch64/property-gcs16.d
+new file mode 100644
+index 00000000000..340577f1758
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs16.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs=always experimental-gcs-report=none)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=always -z experimental-gcs-report=none
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs17.d b/ld/testsuite/ld-aarch64/property-gcs17.d
+new file mode 100644
+index 00000000000..4ba9583ee92
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs17.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs=always experimental-gcs-report=warning)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=always -z experimental-gcs-report=warning
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs18.d b/ld/testsuite/ld-aarch64/property-gcs18.d
+new file mode 100644
+index 00000000000..f71c10e2523
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs18.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs ouput forced with experimental-gcs=always experimental-gcs-report=error)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=always -z experimental-gcs-report=error
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs19.d b/ld/testsuite/ld-aarch64/property-gcs19.d
+new file mode 100644
+index 00000000000..468f96edcf1
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs19.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input without gcs output forced with experimental-gcs=never)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=never
++#readelf: -n
+diff --git a/ld/testsuite/ld-aarch64/property-gcs2.d b/ld/testsuite/ld-aarch64/property-gcs2.d
+new file mode 100644
+index 00000000000..ed545a180b3
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs2.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -shared
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs2.s b/ld/testsuite/ld-aarch64/property-gcs2.s
+new file mode 100644
+index 00000000000..6db7d8396c8
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs2.s
+@@ -0,0 +1,33 @@
++	.text
++	.global	foo
++	.type	foo, %function
++foo:
++	sub	sp, sp, #16
++	mov	w0, 9
++	str	w0, [sp, 12]
++	ldr	w0, [sp, 12]
++	add	w0, w0, 4
++	str	w0, [sp, 12]
++	nop
++	add	sp, sp, 16
++	ret
++	.size	foo, .-foo
++	.global	bar
++	.type	bar, %function
++.ifdef __property_gcs__
++	.section ".note.gnu.property", "a"
++	.p2align 3
++	.long 1f - 0f		/* name length */
++	.long 5f - 2f		/* data length */
++	.long 5			/* note type */
++0:	.asciz "GNU"		/* vendor name */
++1:
++	.p2align 3
++2:	.long 0xc0000000	/* pr_type.  */
++	.long 4f - 3f		/* pr_datasz.  */
++3:
++	.long 0x4		/* GCS.  */
++4:
++	.p2align 3
++5:
++.endif
+diff --git a/ld/testsuite/ld-aarch64/property-gcs20.d b/ld/testsuite/ld-aarch64/property-gcs20.d
+new file mode 100644
+index 00000000000..2bdff88a27a
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs20.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input without gcs output forced with experimental-gcs=implicit)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=implicit
++#readelf: -n
+diff --git a/ld/testsuite/ld-aarch64/property-gcs21.d b/ld/testsuite/ld-aarch64/property-gcs21.d
+new file mode 100644
+index 00000000000..b42b11d14ea
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs21.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input with gcs output forced with experimental-gcs=never)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=never
++#readelf: -n
+diff --git a/ld/testsuite/ld-aarch64/property-gcs22.d b/ld/testsuite/ld-aarch64/property-gcs22.d
+new file mode 100644
+index 00000000000..431fc1ed35b
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs22.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input with gcs output forced with experimental-gcs=implicit)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0 -defsym __property_gcs__=1
++#ld: -z experimental-gcs=implicit
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs3.d b/ld/testsuite/ld-aarch64/property-gcs3.d
+new file mode 100644
+index 00000000000..68d50be0823
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs3.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input without gcs output forced with experimental-gcs)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs4.d b/ld/testsuite/ld-aarch64/property-gcs4.d
+new file mode 100644
+index 00000000000..cd5711e3da3
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs4.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs=always)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=always
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs5.d b/ld/testsuite/ld-aarch64/property-gcs5.d
+new file mode 100644
+index 00000000000..b7a751c0276
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs5.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs experimental-gcs-report=none)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs -z experimental-gcs-report=none
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs6.d b/ld/testsuite/ld-aarch64/property-gcs6.d
+new file mode 100644
+index 00000000000..5abf8126d89
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs6.d
+@@ -0,0 +1,12 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs experimental-gcs-report=warning)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs -z experimental-gcs-report=warning
++#readelf: -n
++#warning: .*property-gcs.*: warning: GCS turned on by -z experimental-gcs on the output when all inputs do not have GCS in NOTE section.
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs7.d b/ld/testsuite/ld-aarch64/property-gcs7.d
+new file mode 100644
+index 00000000000..4df5693a27b
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs7.d
+@@ -0,0 +1,6 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs experimental-gcs-report=error)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs -z experimental-gcs-report=error
++#error: .*property-gcs.*: error: GCS turned on by -z experimental-gcs on the output when all inputs do not have GCS in NOTE section.
+diff --git a/ld/testsuite/ld-aarch64/property-gcs8.d b/ld/testsuite/ld-aarch64/property-gcs8.d
+new file mode 100644
+index 00000000000..463c3ad4197
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs8.d
+@@ -0,0 +1,11 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs=always experimental-gcs-report=none)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=always -z experimental-gcs-report=none
++#readelf: -n
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+diff --git a/ld/testsuite/ld-aarch64/property-gcs9.d b/ld/testsuite/ld-aarch64/property-gcs9.d
+new file mode 100644
+index 00000000000..c3083675c8f
+--- /dev/null
++++ b/ld/testsuite/ld-aarch64/property-gcs9.d
+@@ -0,0 +1,12 @@
++#name: GNU Property (input without gcs ouput forced with experimental-gcs=always experimental-gcs-report=warning)
++#source: property-gcs.s
++#alltargets: [check_shared_lib_support] *linux*
++#as: -march=armv9.4-a+gcs -defsym __mult__=0
++#ld: -z experimental-gcs=always -z experimental-gcs-report=warning
++#readelf: -n
++#warning: .*property-gcs.*: warning: GCS turned on by -z experimental-gcs on the output when all inputs do not have GCS in NOTE section.
++
++Displaying notes found in: .note.gnu.property
++[ 	]+Owner[ 	]+Data size[ 	]+Description
++  GNU                  0x00000010	NT_GNU_PROPERTY_TYPE_0
++      Properties: AArch64 feature: GCS
+-- 
+2.34.1
+
