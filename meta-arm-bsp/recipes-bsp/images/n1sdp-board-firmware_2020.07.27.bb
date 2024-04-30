@@ -11,10 +11,11 @@ INHIBIT_DEFAULT_DEPS = "1"
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 COMPATIBLE_MACHINE = "n1sdp"
 
-SRC_URI = "https://git.linaro.org/landing-teams/working/arm/n1sdp-board-firmware.git/snapshot/${BPN}-N1SDP-${PV}.tar.gz"
-SRC_URI[sha256sum] = "57feba404026f2d6d49c167d63e0e84653ad8b808b13e2244b81fea9e0d58d66"
+SRC_URI = "git://git.linaro.org/landing-teams/working/arm/n1sdp-board-firmware.git;protocol=https;branch=master"
 
-S = "${WORKDIR}/${BPN}-N1SDP-${PV}"
+SRCREV  = "9a095cbdf8ef59a7433e2769e4e2e92782b68c50"
+
+S = "${WORKDIR}/git"
 
 INSTALL_DIR = "/n1sdp-board-firmware_source"
 
