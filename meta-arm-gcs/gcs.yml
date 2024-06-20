@@ -48,5 +48,11 @@ local_conf_header:
     FVP_CONFIG[cluster0.has_permission_indirection_s1] = "1"
     FVP_CONFIG[cluster1.has_permission_indirection_s1] = "1"
 
+  testimage: |
+    IMAGE_CLASSES += "testimage"
+    TEST_SUITES = "ping ssh gcs"
+    IMAGE_FEATURES += "ssh-server-dropbear debug-tweaks"
+    CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys binutils"
+
 target:
   - core-image-full-cmdline
