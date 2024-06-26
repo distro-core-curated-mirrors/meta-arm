@@ -28,6 +28,7 @@ stages:
 
 # Common job fragment to get a worker ready
 .setup:
+  when: manual
   tags:
     - $DEFAULT_TAG
   stage: build
@@ -89,6 +90,7 @@ stages:
 #
 update-repos:
   extends: .setup
+  when: on_success
   stage: prep
   allow_failure:
     exit_codes: 128
@@ -353,3 +355,9 @@ sgi575:
 
 toolchains:
   extends: .build
+
+gcs:
+  when: on_success
+  extends: .setup
+  script:
+    - kas build meta-arm-gcs/gcs-test.yml

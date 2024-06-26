@@ -1,0 +1,12 @@
+header:
+  version: 14
+  includes:
+    - meta-arm-gcs/gcs.yml
+
+local_conf_header:
+  testimage: |
+    IMAGE_CLASSES += "testimage"
+    TESTIMAGE_AUTO = "1"
+    TEST_SUITES = "ping ssh gcs"
+    IMAGE_FEATURES += "ssh-server-dropbear debug-tweaks"
+    CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys binutils"
