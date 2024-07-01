@@ -2,13 +2,12 @@
 # SPDX-License-Identifier: MIT
 #
 
+import unittest
+
 from oeqa.runtime.case import OERuntimeTestCase
 from oeqa.runtime.decorator.package import OEHasPackage
 
 class GCSTests(OERuntimeTestCase):
-
-    # TODO:
-    # - Need a test that fails if GCS is enabled.  kselftest most likely has tests here?
 
     def test_dmesg(self):
         """
@@ -47,3 +46,23 @@ class GCSTests(OERuntimeTestCase):
         status, output = self.target.run(cmd)
         self.assertEqual(status, 0, f"ls failed: {output}")
         self.assertEqual(output, "/usr")
+
+
+    @OEHasPackage(['kselftest'])
+    @unittest.expectedFailure
+    def test_kselftest(self):
+        """
+        Run the GCS tests in the kselftest.
+        """
+        cmd = """
+        cd /usr/libexec/kselftest; \
+        ./run_kselftest.sh $(./run_kselftest.sh -l | awk -e '/arm64.*gcs/ { print "-t " $1 }') \
+        """
+        status, output = self.target.run(cmd)
+
+        # kselftest normally returns 0 even if tests fail, so a failure here is serious
+        self.assertEqual(status, 0, f"kselftest failed: {output}")
+
+        # Identify any test failure lines, and assert that the list is empty
+        fails = [l for l in output.splitlines() if "not ok " in l]
+        self.assertFalse(fails)
