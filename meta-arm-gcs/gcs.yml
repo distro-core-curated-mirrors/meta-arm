@@ -29,7 +29,7 @@ local_conf_header:
     # Use the 6.8 kernel
     PREFERRED_PROVIDER_virtual/kernel = "linux-yocto-dev"
     # No root password for ease
-    EXTRA_IMAGE_FEATURES += "empty-root-password"
+    EXTRA_IMAGE_FEATURES += "empty-root-password allow-empty-password allow-root-login"
     # Install a toolchain
     EXTRA_IMAGE_FEATURES += "tools-sdk"
     # Install a pre-generated SSH key because key generation in a FVP is tiresome
@@ -51,7 +51,7 @@ local_conf_header:
   testimage: |
     IMAGE_CLASSES += "testimage"
     TEST_SUITES = "ping ssh gcs"
-    IMAGE_FEATURES += "ssh-server-dropbear debug-tweaks"
+    IMAGE_FEATURES += "ssh-server-dropbear"
     CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys binutils"
 
 target:
