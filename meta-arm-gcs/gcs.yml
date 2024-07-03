@@ -28,6 +28,7 @@ local_conf_header:
     IMAGE_CLASSES += "fvpboot"
     # Use the 6.8 kernel
     PREFERRED_PROVIDER_virtual/kernel = "linux-yocto-dev"
+    LINUXLIBCVERSION = "6.10"
     # No root password for ease
     EXTRA_IMAGE_FEATURES += "empty-root-password allow-empty-password allow-root-login"
     # Install a toolchain
