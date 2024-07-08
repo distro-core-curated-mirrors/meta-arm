@@ -1,29 +1,47 @@
 Upstream-Status: Pending [https://sourceware.org/git/?p=glibc.git;a=shortlog;h=refs/heads/arm/gcs]
 Signed-off-by: Ross Burton <ross.burton@arm.com>
 
-From ccb4e98a6cbdf5b8939a6ae416248bb1436a1338 Mon Sep 17 00:00:00 2001
+From 17b303b5b4f350e31071f51e229fd7555fe58d0f Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 13 Jul 2023 06:43:33 +0100
 Subject: [PATCH 01/21] aarch64: Add HWCAP2_GCS
 
 ---
- sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h | 1 +
- 1 file changed, 1 insertion(+)
+ sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
 
 diff --git a/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h b/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
-index 91f0e312b9..476cf5a299 100644
+index 91f0e312b9..d7e32a3558 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
 +++ b/sysdeps/unix/sysv/linux/aarch64/bits/hwcap.h
-@@ -100,3 +100,4 @@
+@@ -100,3 +100,22 @@
  #define HWCAP2_SME_F16F16	(1UL << 42)
  #define HWCAP2_MOPS		(1UL << 43)
  #define HWCAP2_HBC		(1UL << 44)
++#define HWCAP2_SVE_B16B16	(1UL << 45)
++#define HWCAP2_LRCPC3		(1UL << 46)
++#define HWCAP2_LSE128		(1UL << 47)
++#define HWCAP2_FPMR		(1UL << 48)
++#define HWCAP2_LUT		(1UL << 49)
++#define HWCAP2_FAMINMAX		(1UL << 50)
++#define HWCAP2_F8CVT		(1UL << 51)
++#define HWCAP2_F8FMA		(1UL << 52)
++#define HWCAP2_F8DP4		(1UL << 53)
++#define HWCAP2_F8DP2		(1UL << 54)
++#define HWCAP2_F8E4M3		(1UL << 55)
++#define HWCAP2_F8E5M2		(1UL << 56)
++#define HWCAP2_SME_LUTV2	(1UL << 57)
++#define HWCAP2_SME_F8F16	(1UL << 58)
++#define HWCAP2_SME_F8F32	(1UL << 59)
++#define HWCAP2_SME_SF8FMA	(1UL << 60)
++#define HWCAP2_SME_SF8DP4	(1UL << 61)
++#define HWCAP2_SME_SF8DP2	(1UL << 62)
 +#define HWCAP2_GCS		(1UL << 63)
 -- 
 2.34.1
 
 
-From 15d1674cae644619d521af249b3a4f1c17cdcee9 Mon Sep 17 00:00:00 2001
+From 2dfb56bc2b97bfca57402c5b8b6b7b955383beb2 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Wed, 22 Feb 2023 14:35:00 +0000
 Subject: [PATCH 02/21] aarch64: Add asm helpers for GCS
@@ -57,20 +75,20 @@ index 464674e89c..661d9fe8c1 100644
 2.34.1
 
 
-From 0f6417aafcb5332cea53f81daa2dca9588c8b733 Mon Sep 17 00:00:00 2001
+From d7c36d4b3098d94b35dd8281296f3ed945608b43 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Fri, 22 Dec 2023 09:47:33 +0000
-Subject: [PATCH 03/21] elf.h: define GNU_PROPERTY_AARCH64_FEATURE_1_GCS
+Subject: [PATCH 03/21] elf.h: Define GNU_PROPERTY_AARCH64_FEATURE_1_GCS
 
 ---
  elf/elf.h | 1 +
  1 file changed, 1 insertion(+)
 
 diff --git a/elf/elf.h b/elf/elf.h
-index 455731663c..f927dad3c3 100644
+index 1c394c64cd..90ed6c8c9f 100644
 --- a/elf/elf.h
 +++ b/elf/elf.h
-@@ -1377,6 +1377,7 @@ typedef struct
+@@ -1381,6 +1381,7 @@ typedef struct
  
  #define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
  #define GNU_PROPERTY_AARCH64_FEATURE_1_PAC	(1U << 1)
@@ -82,49 +100,10 @@ index 455731663c..f927dad3c3 100644
 2.34.1
 
 
-From 6c7378b54f6f8c3db222894ed27342782bf526b7 Mon Sep 17 00:00:00 2001
-From: Szabolcs Nagy <szabolcs.nagy@arm.com>
-Date: Fri, 22 Dec 2023 12:29:48 +0000
-Subject: [PATCH 04/21] aarch64: mark objects with GCS property note
-
-TODO: binutils config check
-TODO: build attributes instead of gnu property
----
- sysdeps/aarch64/sysdep.h | 5 +++--
- 1 file changed, 3 insertions(+), 2 deletions(-)
-
-diff --git a/sysdeps/aarch64/sysdep.h b/sysdeps/aarch64/sysdep.h
-index 661d9fe8c1..55e0230b5e 100644
---- a/sysdeps/aarch64/sysdep.h
-+++ b/sysdeps/aarch64/sysdep.h
-@@ -85,6 +85,7 @@ strip_pac (void *p)
- #define FEATURE_1_AND 0xc0000000
- #define FEATURE_1_BTI 1
- #define FEATURE_1_PAC 2
-+#define FEATURE_1_GCS 4
- 
- /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
- #define GNU_PROPERTY(type, value)	\
-@@ -103,9 +104,9 @@ strip_pac (void *p)
- /* Add GNU property note with the supported features to all asm code
-    where sysdep.h is included.  */
- #if HAVE_AARCH64_BTI && HAVE_AARCH64_PAC_RET
--GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC)
-+GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC|FEATURE_1_GCS)
- #elif HAVE_AARCH64_BTI
--GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI)
-+GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_GCS)
- #endif
- 
- /* Define an entry point visible from C.  */
--- 
-2.34.1
-
-
-From e6bc31c117194bfadcf10a6c90b6586800a33a11 Mon Sep 17 00:00:00 2001
+From 30e9136e7ffd47868bb5aa5b03e1d9ef9f086e51 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Fri, 25 Nov 2022 18:16:07 +0000
-Subject: [PATCH 05/21] aarch64: Define jmp_buf offset for GCS
+Subject: [PATCH 04/21] aarch64: Define jmp_buf offset for GCS
 
 The target specific internal __longjmp is called with a __jmp_buf
 argument which has its size exposed in the ABI. On aarch64 this has
@@ -237,10 +216,10 @@ index 632328c7e2..ec047cf6b1 100644
 2.34.1
 
 
-From c3274a8582b4915efea5a16558e730d362bea177 Mon Sep 17 00:00:00 2001
+From 9835e1a54cda625f999bc00e85830076b312b793 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 23 Feb 2023 08:54:04 +0000
-Subject: [PATCH 06/21] aarch64: Add GCS support to longjmp
+Subject: [PATCH 05/21] aarch64: Add GCS support to longjmp
 
 This implementations ensures that longjmp across different stacks
 works: it scans for GCS cap token and switches GCS if necessary
@@ -250,15 +229,15 @@ current GCSPR is on the same GCS.
 This makes longjmp linear time in the number of jumped over stack
 frames when GCS is enabled.
 ---
- sysdeps/aarch64/__longjmp.S | 31 +++++++++++++++++++++++++++++++
+ sysdeps/aarch64/__longjmp.S | 30 ++++++++++++++++++++++++++++++
  sysdeps/aarch64/setjmp.S    | 10 ++++++++++
- 2 files changed, 41 insertions(+)
+ 2 files changed, 40 insertions(+)
 
 diff --git a/sysdeps/aarch64/__longjmp.S b/sysdeps/aarch64/__longjmp.S
-index 7b6add751e..ecd272262d 100644
+index 7b6add751e..d8670d8995 100644
 --- a/sysdeps/aarch64/__longjmp.S
 +++ b/sysdeps/aarch64/__longjmp.S
-@@ -91,6 +91,37 @@ ENTRY (__longjmp)
+@@ -91,6 +91,36 @@ ENTRY (__longjmp)
  	ldp	d12, d13, [x0, #JB_D12<<3]
  	ldp	d14, d15, [x0, #JB_D14<<3]
  
@@ -279,8 +258,7 @@ index 7b6add751e..ecd272262d 100644
 +	and	x6, x4, 0xfffffffffffff000
 +	orr	x6, x6, 1
 +	cmp	x5, x6
-+	b.eq	L(gcs_switch)
-+	b	L(gcs_scan)
++	b.ne	L(gcs_scan)
 +L(gcs_switch):
 +	add	x2, x4, 8
 +	GCSSS1 (x4)
@@ -321,10 +299,10 @@ index 43fdb1b2fb..f7ffccfaba 100644
 2.34.1
 
 
-From 868c129b90a52f7c30b8a560dc580f851db4b6fc Mon Sep 17 00:00:00 2001
+From 17121c450d72e60680b28cf86515e9adfbe444e0 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Wed, 27 Dec 2023 18:36:10 +0000
-Subject: [PATCH 07/21] aarch64: Add GCS support to vfork
+Subject: [PATCH 06/21] aarch64: Add GCS support to vfork
 
 ---
  sysdeps/unix/sysv/linux/aarch64/vfork.S | 8 +++++++-
@@ -354,10 +332,10 @@ index e71e492da3..cfaf4a1ffb 100644
 2.34.1
 
 
-From 996a31b2a3313039b5c66d7de15577e5bc145278 Mon Sep 17 00:00:00 2001
+From 68ae67a7fcbfa762edc11a596a0e29245d9e8a24 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Fri, 24 Feb 2023 16:29:32 +0000
-Subject: [PATCH 08/21] aarch64: Add GCS support for setcontext
+Subject: [PATCH 07/21] aarch64: Add GCS support for setcontext
 
 Userspace ucontext needs to store GCSPR, it does not have to be
 compatible with the kernel ucontext. For now we use the linux
@@ -367,11 +345,11 @@ Similar implementation to the longjmp code, supports switching GCS
 if the target GCS is capped, and unwinding a continous GCS to a
 previous state.
 ---
- sysdeps/unix/sysv/linux/aarch64/getcontext.S  | 17 +++++++-
- sysdeps/unix/sysv/linux/aarch64/setcontext.S  | 39 +++++++++++++++++++
- sysdeps/unix/sysv/linux/aarch64/swapcontext.S | 32 +++++++++++----
+ sysdeps/unix/sysv/linux/aarch64/getcontext.S  | 17 ++++++++-
+ sysdeps/unix/sysv/linux/aarch64/setcontext.S  | 38 +++++++++++++++++++
+ sysdeps/unix/sysv/linux/aarch64/swapcontext.S | 32 ++++++++++++----
  .../sysv/linux/aarch64/ucontext-internal.h    |  5 +++
- 4 files changed, 84 insertions(+), 9 deletions(-)
+ 4 files changed, 83 insertions(+), 9 deletions(-)
 
 diff --git a/sysdeps/unix/sysv/linux/aarch64/getcontext.S b/sysdeps/unix/sysv/linux/aarch64/getcontext.S
 index e5b69c9a82..30e2b39399 100644
@@ -404,10 +382,10 @@ index e5b69c9a82..30e2b39399 100644
  	str	wzr, [x2, #oHEAD + oSIZE]
  
 diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
-index ba659438c5..c08e83ee60 100644
+index ba659438c5..bdfd4580ec 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
 +++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
-@@ -130,6 +130,45 @@ ENTRY (__setcontext)
+@@ -130,6 +130,44 @@ ENTRY (__setcontext)
  	ldr	w4, [x3, oFPCR - oFPSR]
  	msr	fpcr, x4
  
@@ -436,8 +414,7 @@ index ba659438c5..c08e83ee60 100644
 +	and	x6, x4, 0xfffffffffffff000
 +	orr	x6, x6, 1
 +	cmp	x5, x6
-+	b.eq	L(gcs_switch)
-+	b	L(gcs_scan)
++	b.ne	L(gcs_scan)
 +L(gcs_switch):
 +	add	x2, x4, 8
 +	GCSSS1 (x4)
@@ -535,10 +512,10 @@ index 096d5fb7c7..84f5365c0e 100644
 2.34.1
 
 
-From 99f884d57f17afea877006284f469747711e1d51 Mon Sep 17 00:00:00 2001
+From 7c8abf5ec623797b315b5b07ab80f3db429627a8 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 28 Dec 2023 15:53:38 +0000
-Subject: [PATCH 09/21] aarch64: mark swapcontext with indirect_return
+Subject: [PATCH 08/21] aarch64: Mark swapcontext with indirect_return
 
 ---
  sysdeps/aarch64/bits/indirect-return.h | 36 ++++++++++++++++++++++++++
@@ -591,10 +568,10 @@ index 0000000000..99905f21fa
 2.34.1
 
 
-From 54e90582aabdb44f010ad5dfd64ce9c3e6d33914 Mon Sep 17 00:00:00 2001
+From 710b484ebf9ee29ea48ea3f04349a6f691ca38cb Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Tue, 4 Apr 2023 10:42:21 +0100
-Subject: [PATCH 10/21] aarch64: Add GCS support for makecontext
+Subject: [PATCH 09/21] aarch64: Add GCS support for makecontext
 
 Changed the makecontext logic: previously the first setcontext jumped
 straight to the user callback function and the return address is set
@@ -695,10 +672,10 @@ index 5aec182013..9e66b6761c 100644
    va_start (ap, argc);
    for (i = 0; i < argc; ++i)
 diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
-index c08e83ee60..6aa7236693 100644
+index bdfd4580ec..17b0a48ce1 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
 +++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
-@@ -181,7 +181,11 @@ L(gcs_done):
+@@ -180,7 +180,11 @@ L(gcs_done):
  PSEUDO_END (__setcontext)
  weak_alias (__setcontext, setcontext)
  
@@ -714,10 +691,10 @@ index c08e83ee60..6aa7236693 100644
 2.34.1
 
 
-From 56253d5f47330f502dd6bc8f3e12eeabf6c20a8b Mon Sep 17 00:00:00 2001
+From 3f6a1900b756f8d4471718d438b23d9b4da2a810 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Mon, 17 Jul 2023 16:54:15 +0100
-Subject: [PATCH 11/21] aarch64: Try to free the GCS of makecontext
+Subject: [PATCH 10/21] aarch64: Try to free the GCS of makecontext
 
 Free GCS after a makecontext start func returns and at thread exit, so
 assume makecontext cannot outlive the thread where it was created.
@@ -862,7 +839,7 @@ index 9e66b6761c..779f7e55aa 100644
     user context.  The stack looks like this:
  
 diff --git a/sysdeps/unix/sysv/linux/aarch64/setcontext.S b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
-index 6aa7236693..723be73213 100644
+index 17b0a48ce1..853dcb7a73 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/setcontext.S
 +++ b/sysdeps/unix/sysv/linux/aarch64/setcontext.S
 @@ -34,6 +34,9 @@
@@ -885,7 +862,7 @@ index 6aa7236693..723be73213 100644
  L(gcs_scan):
  	cmp	x2, x4
  	b.eq	L(gcs_pop)
-@@ -163,10 +167,18 @@ L(gcs_switch):
+@@ -162,10 +166,18 @@ L(gcs_switch):
  	GCSSS2 (xzr)
  L(gcs_pop):
  	cmp	x2, x3
@@ -905,7 +882,7 @@ index 6aa7236693..723be73213 100644
  L(gcs_done):
  
  2:
-@@ -187,6 +199,7 @@ ENTRY (__startcontext)
+@@ -186,6 +198,7 @@ ENTRY (__startcontext)
  	cfi_undefined (x30)
  	blr	x20
  	mov	x0, x19
@@ -936,10 +913,10 @@ index bbbe35723c..590318dee8 100644
 2.34.1
 
 
-From 200010339f4fa0449a7bd76555931881eaea916c Mon Sep 17 00:00:00 2001
+From 0bc8a3405a31001a4d0fbee8b14a40e977c9807b Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Mon, 17 Jul 2023 08:31:05 +0100
-Subject: [PATCH 12/21] aarch64: Add glibc.cpu.aarch64_gcs tunable
+Subject: [PATCH 11/21] aarch64: Add glibc.cpu.aarch64_gcs tunable
 
 This tunable is for controlling the GCS status. It is the argument to
 the PR_SET_SHADOW_STACK_STATUS prctl, by default 0, so GCS is disabled.
@@ -973,10 +950,10 @@ index 92c6cbfa92..c08be86932 100644
    }
  }
 diff --git a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
-index b1a3f673f0..a8b6a4654a 100644
+index c0b047bc0d..016fe2701f 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
 +++ b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
-@@ -128,4 +128,8 @@ init_cpu_features (struct cpu_features *cpu_features)
+@@ -176,4 +176,8 @@ init_cpu_features (struct cpu_features *cpu_features)
  
    /* Check if MOPS is supported.  */
    cpu_features->mops = GLRO (dl_hwcap2) & HWCAP2_MOPS;
@@ -1032,10 +1009,10 @@ index 0000000000..23c61da6c4
 2.34.1
 
 
-From cf7e262541c78c65a33ed78d39c6dc0a50b36d96 Mon Sep 17 00:00:00 2001
+From fb24f76d85f7696012f88d35669258a88091db6f Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 13 Jul 2023 07:22:44 +0100
-Subject: [PATCH 13/21] aarch64: Enable GCS in static linked exe
+Subject: [PATCH 12/21] aarch64: Enable GCS in static linked exe
 
 Use the ARCH_SETUP_TLS hook to enable GCS in the static linked case.
 The system call must be inlined and then GCS is enabled on a top
@@ -1105,10 +1082,10 @@ index 0000000000..ccf0f8af5c
 2.34.1
 
 
-From 7ea8526a50e6867b154d2bb4fbe9de4ff2fc9468 Mon Sep 17 00:00:00 2001
+From 5585da866c68dd334158dcd9495508e6f132a621 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Fri, 14 Jul 2023 15:49:11 +0100
-Subject: [PATCH 14/21] aarch64: Enable GCS in dynamic linked exe
+Subject: [PATCH 13/21] aarch64: Enable GCS in dynamic linked exe
 
 Use the dynamic linker start code to enable GCS in the dynamic linked
 case after _dl_start returns and before _dl_start_user which marks
@@ -1212,10 +1189,49 @@ index 23cdaf7d9e..6c0690bb95 100644
 2.34.1
 
 
-From 1e348038b0f013ef9c30e3c4072b9555344391cb Mon Sep 17 00:00:00 2001
+From ba0895ad0db384257af34b53ecec3a20eaf96a07 Mon Sep 17 00:00:00 2001
+From: Szabolcs Nagy <szabolcs.nagy@arm.com>
+Date: Fri, 22 Dec 2023 12:29:48 +0000
+Subject: [PATCH 14/21] aarch64: Mark objects with GCS property note
+
+TODO: binutils config check
+TODO: build attributes instead of gnu property
+---
+ sysdeps/aarch64/sysdep.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/sysdeps/aarch64/sysdep.h b/sysdeps/aarch64/sysdep.h
+index 661d9fe8c1..55e0230b5e 100644
+--- a/sysdeps/aarch64/sysdep.h
++++ b/sysdeps/aarch64/sysdep.h
+@@ -85,6 +85,7 @@ strip_pac (void *p)
+ #define FEATURE_1_AND 0xc0000000
+ #define FEATURE_1_BTI 1
+ #define FEATURE_1_PAC 2
++#define FEATURE_1_GCS 4
+ 
+ /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
+ #define GNU_PROPERTY(type, value)	\
+@@ -103,9 +104,9 @@ strip_pac (void *p)
+ /* Add GNU property note with the supported features to all asm code
+    where sysdep.h is included.  */
+ #if HAVE_AARCH64_BTI && HAVE_AARCH64_PAC_RET
+-GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC)
++GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_PAC|FEATURE_1_GCS)
+ #elif HAVE_AARCH64_BTI
+-GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI)
++GNU_PROPERTY (FEATURE_1_AND, FEATURE_1_BTI|FEATURE_1_GCS)
+ #endif
+ 
+ /* Define an entry point visible from C.  */
+-- 
+2.34.1
+
+
+From 7549c587a03ef93ac84a5f99be494e117cc87648 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 21 Dec 2023 15:14:08 +0000
-Subject: [PATCH 15/21] aarch64: add glibc.cpu.aarch64_gcs_policy
+Subject: [PATCH 15/21] aarch64: Add glibc.cpu.aarch64_gcs_policy
 
 policy sets how gcs tunable and gcs marking turns into gcs state:
 
@@ -1223,7 +1239,7 @@ policy sets how gcs tunable and gcs marking turns into gcs state:
 1: state = marking ? tunable : (tunable && dlopen ? err : 0)
 2: state = marking ? tunable : (tunable ? err : 0)
 
-TODO: state lock
+TODO: state lock, default policy
 ---
  sysdeps/aarch64/dl-tunables.list               |  5 +++++
  sysdeps/unix/sysv/linux/aarch64/cpu-features.c |  9 +++++++--
@@ -1246,10 +1262,10 @@ index c08be86932..2a07a6216b 100644
    }
  }
 diff --git a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
-index a8b6a4654a..bab5c32892 100644
+index 016fe2701f..4f9d70c25d 100644
 --- a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
 +++ b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
-@@ -130,6 +130,11 @@ init_cpu_features (struct cpu_features *cpu_features)
+@@ -178,6 +178,11 @@ init_cpu_features (struct cpu_features *cpu_features)
    cpu_features->mops = GLRO (dl_hwcap2) & HWCAP2_MOPS;
  
    if (GLRO (dl_hwcap2) & HWCAP2_GCS)
@@ -1291,12 +1307,16 @@ index 7af232de52..a9d5ee9df5 100644
 2.34.1
 
 
-From 92cd77cd36137d81ac9500f595f0c4d0c3c6539d Mon Sep 17 00:00:00 2001
+From f49b9a795564d252f747ff08bc1b8b1c9ae3a110 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 28 Dec 2023 18:31:32 +0000
-Subject: [PATCH 16/21] aarch64: use l_searchlist.r_list for bti
+Subject: [PATCH 16/21] aarch64: Use l_searchlist.r_list for bti
 
 Allows using the same function for static exe.
+
+TODO: not clear if the two are always equivalent other than the
+ordering and in case of static linking when dl-support.c leaves
+l_initfini NULL.
 ---
  sysdeps/aarch64/dl-bti.c | 5 ++---
  1 file changed, 2 insertions(+), 3 deletions(-)
@@ -1322,10 +1342,10 @@ index fd0d308a39..e03bfc2acb 100644
 2.34.1
 
 
-From deded666b363b18c93ee6baed7dcf32551158eca Mon Sep 17 00:00:00 2001
+From a32b526f9fbf0f471ac2e2ac9353136b10dea4c1 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 21 Dec 2023 23:05:10 +0000
-Subject: [PATCH 17/21] aarch64: handling gcs marking
+Subject: [PATCH 17/21] aarch64: Handle gcs marking
 
 ---
  sysdeps/aarch64/Makefile  |  4 ++-
@@ -1479,12 +1499,16 @@ index 56a63fc3dd..423fc0bd8e 100644
 2.34.1
 
 
-From 5017a71252bd923b764b58cd61021b028c84d361 Mon Sep 17 00:00:00 2001
+From 4f474c0f31039b1569566ee9fb1ca8368fbae381 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Thu, 28 Dec 2023 18:32:02 +0000
-Subject: [PATCH 18/21] aarch64: use l_searchlist.r_list for gcs
+Subject: [PATCH 18/21] aarch64: Use l_searchlist.r_list for gcs
 
 Allows using the same function for static exe.
+
+TODO: not clear if the two are always equivalent other than the
+ordering and in case of static linking when dl-support.c leaves
+l_initfini NULL.
 ---
  sysdeps/aarch64/dl-gcs.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
@@ -1504,12 +1528,14 @@ index a92deb54b5..764b8a56e9 100644
 2.34.1
 
 
-From 84bfdb91bded2358b2642eed3bdae3c049576eb4 Mon Sep 17 00:00:00 2001
+From 9c32231f6e02d50135e45598b88929f289839ab4 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Wed, 10 Jan 2024 16:20:24 +0000
-Subject: [PATCH 19/21] aarch64: ignore GCS property of ld.so
+Subject: [PATCH 19/21] aarch64: Ignore GCS property of ld.so
 
-ldso->l_mach.gcs may not be set up, just assume ldso is GCS compatible.
+check_gcs is called for each dependency of a DSO, but the GNU property
+of the ld.so is not processed so ldso->l_mach.gcs may not be correct.
+Just assume ld.so is GCS compatible independently of the ELF marking.
 ---
  sysdeps/aarch64/dl-gcs.c | 5 +++++
  1 file changed, 5 insertions(+)
@@ -1534,11 +1560,13 @@ index 764b8a56e9..b81aa30787 100644
 2.34.1
 
 
-From fcdce58087260a68d1a74b28e5b0146e69511f16 Mon Sep 17 00:00:00 2001
+From 66da47b7963e35a961362c3e072a482d862f96e5 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Wed, 27 Dec 2023 17:17:11 +0000
-Subject: [PATCH 20/21] aarch64: process gnu properties in static exe
+Subject: [PATCH 20/21] aarch64: Process gnu properties in static exe
 
+Unlike for BTI, the kernel does not process GCS properties so update
+GL(dl_aarch64_gcs) before the GCS status is set.
 ---
  sysdeps/unix/sysv/linux/aarch64/libc-start.h | 12 ++++++++++++
  1 file changed, 12 insertions(+)
@@ -1577,11 +1605,12 @@ index ccf0f8af5c..6e2e9762ee 100644
 2.34.1
 
 
-From bea263f87c18cc7949b556db73883a209edd27dc Mon Sep 17 00:00:00 2001
+From aa2a94467f103df65ec14a942641396b05205509 Mon Sep 17 00:00:00 2001
 From: Szabolcs Nagy <szabolcs.nagy@arm.com>
 Date: Wed, 14 Feb 2024 15:06:40 +0000
-Subject: [PATCH 21/21] doc: add plain text readme for using GCS
+Subject: [PATCH 21/21] doc: Add plain text readme for using GCS
 
+TODO: this is just for the arm/gcs branch while it is being developed
 ---
  README | 69 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 69 insertions(+)
