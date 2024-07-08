@@ -26,7 +26,7 @@ local_conf_header:
     LICENSE_FLAGS_ACCEPTED += "Arm-FVP-EULA"
     # Enable running an image inside a FVP
     IMAGE_CLASSES += "fvpboot"
-    # Use the 6.8 kernel
+    # Use the -dev patched kernel
     PREFERRED_PROVIDER_virtual/kernel = "linux-yocto-dev"
     LINUXLIBCVERSION = "6.10"
     # No root password for ease
