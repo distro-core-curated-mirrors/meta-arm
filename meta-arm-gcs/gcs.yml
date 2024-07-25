@@ -37,6 +37,9 @@ local_conf_header:
     CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys"
 
   fvp_options: |
+    # Set the instruction set tune to 8.0 to match binary distributions
+    DEFAULTTUNE = "armv8a-crc"
+
     # Set the cores to v9.4 and turn on more features
     FVP_CONFIG[cluster0.has_arm_v9-4] = "1"
     FVP_CONFIG[cluster1.has_arm_v9-4] = "1"
