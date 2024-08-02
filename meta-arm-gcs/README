@@ -15,6 +15,9 @@ To run the image inside an FVP:
 
 $ kas shell gcs.yml -c "../../scripts/runfvp --console"
 
+To run the tests automatically, Kas can be used:
+
+$ kas build --update meta-arm-gcs/gcs-test.yml
 
 Verification:
 
