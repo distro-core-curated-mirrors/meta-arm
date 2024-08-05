@@ -53,7 +53,7 @@ local_conf_header:
     IMAGE_CLASSES += "testimage"
     TEST_SUITES = "ping ssh gcs"
     IMAGE_FEATURES += "ssh-server-dropbear"
-    CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys binutils kselftest"
+    CORE_IMAGE_EXTRA_INSTALL += "ssh-pregen-hostkeys binutils kselftest gcs-test"
 
 target:
   - core-image-full-cmdline

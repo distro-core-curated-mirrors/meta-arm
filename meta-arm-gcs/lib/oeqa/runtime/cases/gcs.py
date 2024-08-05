@@ -47,6 +47,21 @@ class GCSTests(OERuntimeTestCase):
         self.assertEqual(status, 0, f"ls failed: {output}")
         self.assertEqual(output, "/usr")
 
+    def test_chkfeat(self):
+        """
+        Verify that CHKFEAT reports GCS as enabled when running with the tunables.
+
+        If this fails then GCS is not being properly enabled at runtime glibc. The kernel
+        and glibc patches may be out of sync.
+        """
+        cmd = "GLIBC_TUNABLES=glibc.cpu.aarch64_gcs=1:glibc.cpu.aarch64_gcs_policy=2 gcs-test"
+        status, output = self.target.run(cmd)
+        self.assertEqual(status, 0, f"gcs-test failed: {output}")
+
+        # gcs-test should return 1 if GCS is not enabled via the tunables
+        cmd = "gcs-test"
+        status, output = self.target.run(cmd)
+        self.assertEqual(status, 1, f"gcs-test failed: {output}")
 
     @OEHasPackage(['kselftest'])
     @unittest.expectedFailure
