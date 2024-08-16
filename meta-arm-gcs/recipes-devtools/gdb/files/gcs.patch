@@ -1,0 +1,3667 @@
+Upstream-Status: Pending [https://git.linaro.org/people/thiago.bauermann/binutils-gdb.git/?h=guarded-control-stack]
+Signed-off-by: James McGregor <james.mcgregor2@arm.com>
+
+From 9554f581f907a0514d566506529d2a416c62144a Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 20 Dec 2023 15:15:45 -0300
+Subject: [PATCH 01/27] gdb/testsuite: Add gdb.arch/aarch64-gcs.exp testcase
+
+Also add allow_aarch64_gcs_tests procedure to determine whether Guarded Control Stack
+tests should run.
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 22 +++++++
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp | 30 +++++++++
+ gdb/testsuite/lib/gdb.exp              | 88 ++++++++++++++++++++++++++
+ 3 files changed, 140 insertions(+)
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs.c
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs.exp
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+new file mode 100644
+index 00000000000..a450ad0dab6
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -0,0 +1,22 @@
++/* This test program is part of GDB, the GNU debugger.
++
++   Copyright 2023 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++int
++main (void)
++{
++  return 0;
++}
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+new file mode 100644
+index 00000000000..1abf0e2440e
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -0,0 +1,30 @@
++# Copyright 2023 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++
++# Test a binary that uses a Guarded Control Stack.
++
++require allow_aarch64_gcs_tests
++
++standard_testfile
++
++if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
++    return -1
++}
++
++if ![runto_main] {
++    return -1
++}
++
++gdb_test "print \$gcspr" ". = $hex" "GDB knows about GCSPR"
+diff --git a/gdb/testsuite/lib/gdb.exp b/gdb/testsuite/lib/gdb.exp
+index dfe19c9410d..b5d35e6a4dc 100644
+--- a/gdb/testsuite/lib/gdb.exp
++++ b/gdb/testsuite/lib/gdb.exp
+@@ -4618,6 +4618,94 @@ gdb_caching_proc allow_aarch64_mops_tests {} {
+     return $allow_mops_tests
+ }
+ 
++# Run a test on the target to see if it supports Aarch64 GCS extensions.
++# Return 0 if so, 1 if it does not.  Note this causes a restart of GDB.
++
++gdb_caching_proc allow_aarch64_gcs_tests {} {
++    global srcdir subdir gdb_prompt inferior_exited_re
++
++    set me "allow_aarch64_gcs_tests"
++
++    if { ![is_aarch64_target]} {
++	return 0
++    }
++
++    # In binutils > 2.41, ARMv8-A contains the CHK extension.
++    set compile_flags "{additional_flags=-march=armv8-a}"
++
++    # Compile a program that tests the GCS feature.
++    set src {
++	#include <stdbool.h>
++
++	int main() {
++	    bool gcs_supported;
++	    register long features  __asm__ ("x16") = 1;
++
++	    asm ("chkfeat	%0"
++		 : "+r" (features)
++		 : "r" (features));
++
++	    /* If GCS is supported, chkfeat clears bit 0 of x16.  */
++	    gcs_supported = features != 1;
++
++	    /* Return success if GCS is supported.  */
++	    return !gcs_supported;
++	}
++    }
++    if {![gdb_simple_compile $me $src executable $compile_flags]} {
++	# Try again, but with a raw hex instruction so we don't rely on
++	# assembler support for GCS.
++
++	# Compile a program that tests the GCS feature.
++	set src {
++	    #include <stdbool.h>
++
++	    int main() {
++		bool gcs_supported;
++		register long features  __asm__ ("x16") = 1;
++
++		/* chkfeat x16. */
++		asm (".word 0xD503251F"
++		     : "+r" (features)
++		     : "r" (features));
++
++		/* If GCS is supported, chkfeat clears bit 0 of x16.  */
++		gcs_supported = features != 1;
++
++		/* Return success if GCS is supported.  */
++		return !gcs_supported;
++	    }
++	}
++
++	if {![gdb_simple_compile $me $src executable $compile_flags]} {
++	    return 0
++	}
++    }
++
++    # Compilation succeeded so now run it via gdb.
++    clean_restart $obj
++    gdb_run_cmd
++    gdb_expect {
++	-re ".*$inferior_exited_re with code 01.*${gdb_prompt} $" {
++	    verbose -log "\n$me gcs support not detected"
++	    set allow_gcs_tests 0
++	}
++	-re ".*$inferior_exited_re normally.*${gdb_prompt} $" {
++	    verbose -log "\n$me: gcs support detected"
++	    set allow_gcs_tests 1
++	}
++	default {
++	  warning "\n$me: default case taken"
++	    set allow_gcs_tests 0
++	}
++    }
++    gdb_exit
++    remote_file build delete $obj
++
++    verbose "$me:  returning $allow_gcs_tests" 2
++    return $allow_gcs_tests
++}
++
+ # A helper that compiles a test case to see if __int128 is supported.
+ proc gdb_int128_helper {lang} {
+     return [gdb_can_simple_compile "i128-for-$lang" {
+-- 
+2.25.1
+
+
+From 5aba29f1ec566bbf2a29f49671963dd3e71fb278 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Tue, 24 Oct 2023 15:07:53 -0300
+Subject: [PATCH 02/27] Add AArch64 GCS feature.
+
+---
+ gdb/aarch64-tdep.c           |  4 ++++
+ gdb/arch/aarch64.c           |  5 +++++
+ gdb/arch/aarch64.h           |  3 +++
+ gdb/features/Makefile        |  1 +
+ gdb/features/aarch64-gcs.c   | 14 ++++++++++++++
+ gdb/features/aarch64-gcs.xml | 11 +++++++++++
+ 6 files changed, 38 insertions(+)
+ create mode 100644 gdb/features/aarch64-gcs.c
+ create mode 100644 gdb/features/aarch64-gcs.xml
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index e4bca6c6632..d157aea8f21 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -4045,6 +4045,10 @@ aarch64_features_from_target_desc (const struct target_desc *tdesc)
+   features.sme2 = (tdesc_find_feature (tdesc, "org.gnu.gdb.aarch64.sme2")
+ 		   != nullptr);
+ 
++  /* Check for the GCS feature.  */
++  features.gcs = (tdesc_find_feature (tdesc, "org.gnu.gdb.aarch64.gcs")
++		  != nullptr);
++
+   return features;
+ }
+ 
+diff --git a/gdb/arch/aarch64.c b/gdb/arch/aarch64.c
+index 5526aa1b580..b4f4e6892ad 100644
+--- a/gdb/arch/aarch64.c
++++ b/gdb/arch/aarch64.c
+@@ -26,6 +26,7 @@
+ #include "../features/aarch64-sme.c"
+ #include "../features/aarch64-sme2.c"
+ #include "../features/aarch64-tls.c"
++#include "../features/aarch64-gcs.c"
+ 
+ /* See arch/aarch64.h.  */
+ 
+@@ -65,6 +66,10 @@ aarch64_create_target_description (const aarch64_features &features)
+   if (features.sme2)
+     regnum = create_feature_aarch64_sme2 (tdesc.get (), regnum);
+ 
++  /* FIXME: Think about whether the regnum for GCS should be fixed.  */
++  if (features.gcs)
++    regnum = create_feature_aarch64_gcs (tdesc.get (), regnum);
++
+   return tdesc.release ();
+ }
+ 
+diff --git a/gdb/arch/aarch64.h b/gdb/arch/aarch64.h
+index b4c0111aeb4..36f25ea17e2 100644
+--- a/gdb/arch/aarch64.h
++++ b/gdb/arch/aarch64.h
+@@ -51,6 +51,9 @@ struct aarch64_features
+ 
+   /* Whether SME2 is supported.  */
+   bool sme2 = false;
++
++  /* Whether Guarded Control Stack is supported.  */
++  bool gcs = false;
+ };
+ 
+ inline bool operator==(const aarch64_features &lhs, const aarch64_features &rhs)
+diff --git a/gdb/features/Makefile b/gdb/features/Makefile
+index ddf4ec295a9..afc81499021 100644
+--- a/gdb/features/Makefile
++++ b/gdb/features/Makefile
+@@ -202,6 +202,7 @@ FEATURE_XMLFILES = aarch64-core.xml \
+ 	aarch64-fpu.xml \
+ 	aarch64-pauth.xml \
+ 	aarch64-mte.xml \
++	aarch64-gcs.xml \
+ 	arc/v1-core.xml \
+ 	arc/v1-aux.xml \
+ 	arc/v2-core.xml \
+diff --git a/gdb/features/aarch64-gcs.c b/gdb/features/aarch64-gcs.c
+new file mode 100644
+index 00000000000..2b2caf29cc8
+--- /dev/null
++++ b/gdb/features/aarch64-gcs.c
+@@ -0,0 +1,14 @@
++/* THIS FILE IS GENERATED.  -*- buffer-read-only: t -*- vi:set ro:
++  Original: aarch64-gcs.xml */
++
++#include "gdbsupport/tdesc.h"
++
++static int
++create_feature_aarch64_gcs (struct target_desc *result, long regnum)
++{
++  struct tdesc_feature *feature;
++
++  feature = tdesc_create_feature (result, "org.gnu.gdb.aarch64.gcs");
++  tdesc_create_reg (feature, "gcspr", regnum++, 1, "system", 64, "data_ptr");
++  return regnum;
++}
+diff --git a/gdb/features/aarch64-gcs.xml b/gdb/features/aarch64-gcs.xml
+new file mode 100644
+index 00000000000..fd00ce06b30
+--- /dev/null
++++ b/gdb/features/aarch64-gcs.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0"?>
++<!-- Copyright (C) 2023 Free Software Foundation, Inc.
++
++     Copying and distribution of this file, with or without modification,
++     are permitted in any medium without royalty provided the copyright
++     notice and this notice are preserved.  -->
++
++<!DOCTYPE feature SYSTEM "gdb-target.dtd">
++<feature name="org.gnu.gdb.aarch64.gcs">
++  <reg name="gcspr" bitsize="64" type="data_ptr" group="system"/>
++</feature>
+-- 
+2.25.1
+
+
+From 52e50090910a0ebca00b9c92d6fdf80a16a80d6e Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Thu, 21 Dec 2023 12:17:12 -0300
+Subject: [PATCH 03/27] gdb/aarch64-linux: Initial Guarded Control Stack
+ support
+
+This commit adds the GCSPR register.
+---
+ gdb/aarch64-linux-nat.c                | 72 ++++++++++++++++++++++++++
+ gdb/aarch64-linux-tdep.c               | 21 ++++++++
+ gdb/aarch64-tdep.c                     | 27 ++++++++++
+ gdb/aarch64-tdep.h                     | 10 ++++
+ gdb/arch/aarch64-gcs-linux.h           | 42 +++++++++++++++
+ gdb/arch/aarch64.h                     |  3 +-
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  2 +-
+ gdbserver/linux-aarch64-low.cc         |  5 ++
+ include/elf/common.h                   |  3 ++
+ 9 files changed, 183 insertions(+), 2 deletions(-)
+ create mode 100644 gdb/arch/aarch64-gcs-linux.h
+
+diff --git a/gdb/aarch64-linux-nat.c b/gdb/aarch64-linux-nat.c
+index 2e6541f53c3..b3d2091f413 100644
+--- a/gdb/aarch64-linux-nat.c
++++ b/gdb/aarch64-linux-nat.c
+@@ -51,6 +51,7 @@
+ #include "gdb_proc_service.h"
+ #include "arch-utils.h"
+ 
++#include "arch/aarch64-gcs-linux.h"
+ #include "arch/aarch64-mte-linux.h"
+ 
+ #include "nat/aarch64-mte-linux-ptrace.h"
+@@ -544,6 +545,64 @@ store_tlsregs_to_thread (struct regcache *regcache)
+     perror_with_name (_("unable to store TLS register"));
+ }
+ 
++/* Fill GDB's register array with the GCS register values from
++   the current thread.  */
++
++static void
++fetch_gcsregs_from_thread (struct regcache *regcache)
++{
++  aarch64_gdbarch_tdep *tdep
++    = gdbarch_tdep<aarch64_gdbarch_tdep> (regcache->arch ());
++  int regno = tdep->gcs_reg_base;
++
++  gdb_assert (regno != -1);
++
++  struct user_gcs user_gcs;
++  struct iovec iovec;
++
++  iovec.iov_base = &user_gcs;
++  iovec.iov_len = sizeof (user_gcs);
++
++  int tid = get_ptrace_pid (regcache->ptid ());
++  if (ptrace (PTRACE_GETREGSET, tid, NT_ARM_GCS, &iovec) != 0)
++      perror_with_name (_("unable to fetch GCS registers"));
++
++  regcache->raw_supply (regno, &user_gcs.gcspr_el0);
++}
++
++/* Store to the current thread the valid GCS register set in the GDB's
++   register array.  */
++
++static void
++store_gcsregs_to_thread (struct regcache *regcache)
++{
++  aarch64_gdbarch_tdep *tdep
++    = gdbarch_tdep<aarch64_gdbarch_tdep> (regcache->arch ());
++  int regno = tdep->gcs_reg_base;
++
++  gdb_assert (regno != -1);
++
++  if (REG_VALID != regcache->get_register_status (regno))
++    return;
++
++  struct user_gcs user_gcs;
++  struct iovec iovec;
++
++  iovec.iov_base = &user_gcs;
++  iovec.iov_len = sizeof (user_gcs);
++
++  int tid = get_ptrace_pid (regcache->ptid ());
++  if (ptrace (PTRACE_GETREGSET, tid, NT_ARM_GCS, &iovec) != 0)
++    perror_with_name (_ ("unable to fetch GCS registers"));
++
++  uint64_t gcspr;
++  regcache->raw_collect (regno, &gcspr);
++  user_gcs.gcspr_el0 = gcspr;
++
++  if (ptrace (PTRACE_SETREGSET, tid, NT_ARM_GCS, &iovec) != 0)
++    perror_with_name (_("unable to store GCS registers"));
++}
++
+ /* The AArch64 version of the "fetch_registers" target_ops method.  Fetch
+    REGNO from the target and place the result into REGCACHE.  */
+ 
+@@ -579,6 +638,9 @@ aarch64_fetch_registers (struct regcache *regcache, int regno)
+ 
+       if (tdep->has_sme2 ())
+ 	fetch_zt_from_thread (regcache);
++
++      if (tdep->has_gcs ())
++	fetch_gcsregs_from_thread (regcache);
+     }
+   /* General purpose register?  */
+   else if (regno < AARCH64_V0_REGNUM)
+@@ -611,6 +673,9 @@ aarch64_fetch_registers (struct regcache *regcache, int regno)
+ 	   && regno >= tdep->tls_regnum_base
+ 	   && regno < tdep->tls_regnum_base + tdep->tls_register_count)
+     fetch_tlsregs_from_thread (regcache);
++  /* GCS register?  */
++  else if (tdep->has_gcs () && (regno == tdep->gcs_reg_base))
++    fetch_gcsregs_from_thread (regcache);
+ }
+ 
+ /* A version of the "fetch_registers" target_ops method used when running
+@@ -682,6 +747,9 @@ aarch64_store_registers (struct regcache *regcache, int regno)
+ 
+       if (tdep->has_sme2 ())
+ 	store_zt_to_thread (regcache);
++
++      if (tdep->has_gcs ())
++	store_gcsregs_to_thread (regcache);
+     }
+   /* General purpose register?  */
+   else if (regno < AARCH64_V0_REGNUM)
+@@ -708,6 +776,9 @@ aarch64_store_registers (struct regcache *regcache, int regno)
+ 	   && regno >= tdep->tls_regnum_base
+ 	   && regno < tdep->tls_regnum_base + tdep->tls_register_count)
+     store_tlsregs_to_thread (regcache);
++  /* GCS register?  */
++  else if (tdep->has_gcs () && (regno == tdep->gcs_reg_base))
++    store_gcsregs_to_thread (regcache);
+ 
+   /* PAuth registers are read-only.  */
+ }
+@@ -887,6 +958,7 @@ aarch64_linux_nat_target::read_description ()
+   features.tls = aarch64_tls_register_count (tid);
+   /* SME feature check.  */
+   features.svq = aarch64_za_get_svq (tid);
++  features.gcs = hwcap2 & HWCAP2_GCS;
+ 
+   /* Check for SME2 support.  */
+   if ((hwcap2 & HWCAP2_SME2) || (hwcap2 & HWCAP2_SME2P1))
+diff --git a/gdb/aarch64-linux-tdep.c b/gdb/aarch64-linux-tdep.c
+index a1296a8f0c7..d4e948d3b37 100644
+--- a/gdb/aarch64-linux-tdep.c
++++ b/gdb/aarch64-linux-tdep.c
+@@ -48,6 +48,7 @@
+ #include "record-full.h"
+ #include "linux-record.h"
+ 
++#include "arch/aarch64-gcs-linux.h"
+ #include "arch/aarch64-mte-linux.h"
+ #include "arch/aarch64-scalable-linux.h"
+ 
+@@ -1605,6 +1606,25 @@ aarch64_linux_iterate_over_regset_sections (struct gdbarch *gdbarch,
+       cb (".reg-aarch-tls", sizeof_tls_regset, sizeof_tls_regset,
+ 	  &aarch64_linux_tls_regset, "TLS register", cb_data);
+     }
++
++  /* Handle GCS registers.  */
++  if (tdep->has_gcs ())
++    {
++      /* Create this on the fly in order to handle the variable location.  */
++      const struct regcache_map_entry gcs_regmap[] =
++	{
++	  { 1, tdep->gcs_reg_base, 8 },
++	  { 0 }
++	};
++
++      const struct regset aarch64_linux_gcs_regset =
++	{
++	  gcs_regmap, regcache_supply_regset, regcache_collect_regset
++	};
++
++      cb (".reg-aarch-gcs", sizeof (struct user_gcs), sizeof (struct user_gcs),
++	  &aarch64_linux_gcs_regset, "GCS registers", cb_data);
++    }
+ }
+ 
+ /* Implement the "core_read_description" gdbarch method.  */
+@@ -1630,6 +1650,7 @@ aarch64_linux_core_read_description (struct gdbarch *gdbarch,
+   features.vq = aarch64_linux_core_read_vq_from_sections (gdbarch, abfd);
+   features.pauth = hwcap & AARCH64_HWCAP_PACA;
+   features.mte = hwcap2 & HWCAP2_MTE;
++  features.gcs = hwcap2 & HWCAP2_GCS;
+ 
+   /* Handle the TLS section.  */
+   asection *tls = bfd_get_section_by_name (abfd, ".reg-aarch-tls");
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index d157aea8f21..0d32b948924 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -158,6 +158,12 @@ static const char *const aarch64_mte_register_names[] =
+   "tag_ctl"
+ };
+ 
++static const char *const aarch64_gcs_register_names[] = {
++  /* Guarded Control Stack Pointer Register.  */
++  /* FIXME: Change to gcspr_el0?  */
++  "gcspr"
++};
++
+ static int aarch64_stack_frame_destroyed_p (struct gdbarch *, CORE_ADDR);
+ 
+ /* AArch64 prologue cache structure.  */
+@@ -4444,6 +4450,23 @@ aarch64_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
+     int first_w_regnum = num_pseudo_regs;
+     num_pseudo_regs += 31;
+ 
++  const struct tdesc_feature *feature_gcs
++      = tdesc_find_feature (tdesc, "org.gnu.gdb.aarch64.gcs");
++  int first_gcs_regnum = -1;
++  /* Add the GCS registers.  */
++  if (feature_gcs != NULL)
++    {
++      first_gcs_regnum = num_regs;
++      /* Validate the descriptor provides the mandatory GCS registers and
++	 allocate their numbers.  */
++      for (i = 0; i < ARRAY_SIZE (aarch64_gcs_register_names); i++)
++	valid_p &= tdesc_numbered_register (feature_gcs, tdesc_data.get (),
++					    first_gcs_regnum + i,
++					    aarch64_gcs_register_names[i]);
++
++      num_regs += i;
++    }
++
+   if (!valid_p)
+     return nullptr;
+ 
+@@ -4465,6 +4488,7 @@ aarch64_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
+   tdep->mte_reg_base = first_mte_regnum;
+   tdep->tls_regnum_base = first_tls_regnum;
+   tdep->tls_register_count = tls_register_count;
++  tdep->gcs_reg_base = first_gcs_regnum;
+ 
+   /* Set the SME register set details.  The pseudo-registers will be adjusted
+      later.  */
+@@ -4736,6 +4760,9 @@ aarch64_dump_tdep (struct gdbarch *gdbarch, struct ui_file *file)
+ 	      pulongest (tdep->sme_tile_pseudo_base));
+   gdb_printf (file, _("aarch64_dump_tdep: sme_svq = %s\n"),
+ 	      pulongest (tdep->sme_svq));
++
++  gdb_printf (file, _ ("aarch64_dump_tdep: gcs_reg_base = %d\n"),
++	      tdep->gcs_reg_base);
+ }
+ 
+ #if GDB_SELF_TEST
+diff --git a/gdb/aarch64-tdep.h b/gdb/aarch64-tdep.h
+index 0e6024bfcbc..9508b5fb302 100644
+--- a/gdb/aarch64-tdep.h
++++ b/gdb/aarch64-tdep.h
+@@ -182,6 +182,16 @@ struct aarch64_gdbarch_tdep : gdbarch_tdep_base
+   {
+     return sme2_zt0_regnum > 0;
+   }
++
++  /* First GCS register.  This is -1 if no GCS registers are available.  */
++  int gcs_reg_base = -1;
++
++  /* Returns true if the target supports GCS.  */
++  bool
++  has_gcs () const
++  {
++    return gcs_reg_base != -1;
++  }
+ };
+ 
+ const target_desc *aarch64_read_description (const aarch64_features &features);
+diff --git a/gdb/arch/aarch64-gcs-linux.h b/gdb/arch/aarch64-gcs-linux.h
+new file mode 100644
+index 00000000000..8da12325c79
+--- /dev/null
++++ b/gdb/arch/aarch64-gcs-linux.h
+@@ -0,0 +1,42 @@
++/* Common Linux target-dependent definitions for AArch64 GCS
++
++   Copyright (C) 2023 Free Software Foundation, Inc.
++
++   This file is part of GDB.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++#ifndef ARCH_AARCH64_GCS_LINUX_H
++#define ARCH_AARCH64_GCS_LINUX_H
++
++#include <stdint.h>
++
++/* Feature check for Guarded Control Stack.  */
++#ifndef HWCAP2_GCS
++#define HWCAP2_GCS (1UL << 48)
++#endif
++
++/* The GCS regset consists of a single 64-bit register.  */
++#define AARCH64_LINUX_SIZEOF_GCS 8
++
++/* GCS state (NT_ARM_GCS).  */
++
++struct user_gcs
++{
++  uint64_t features_enabled;
++  uint64_t features_locked;
++  uint64_t gcspr_el0;
++};
++
++#endif /* ARCH_AARCH64_GCS_LINUX_H */
+diff --git a/gdb/arch/aarch64.h b/gdb/arch/aarch64.h
+index 36f25ea17e2..b3d2c78f236 100644
+--- a/gdb/arch/aarch64.h
++++ b/gdb/arch/aarch64.h
+@@ -63,7 +63,8 @@ inline bool operator==(const aarch64_features &lhs, const aarch64_features &rhs)
+     && lhs.mte == rhs.mte
+     && lhs.tls == rhs.tls
+     && lhs.svq == rhs.svq
+-    && lhs.sme2 == rhs.sme2;
++    && lhs.sme2 == rhs.sme2
++    && lhs.gcs == rhs.gcs;
+ }
+ 
+ namespace std
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index 1abf0e2440e..f3a2c2b6aa0 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -27,4 +27,4 @@ if ![runto_main] {
+     return -1
+ }
+ 
+-gdb_test "print \$gcspr" ". = $hex" "GDB knows about GCSPR"
++gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+diff --git a/gdbserver/linux-aarch64-low.cc b/gdbserver/linux-aarch64-low.cc
+index eb30c31f8f8..e15dde97a4d 100644
+--- a/gdbserver/linux-aarch64-low.cc
++++ b/gdbserver/linux-aarch64-low.cc
+@@ -39,6 +39,7 @@
+ 
+ #include "gdb_proc_service.h"
+ #include "arch/aarch64.h"
++#include "arch/aarch64-gcs-linux.h"
+ #include "arch/aarch64-mte-linux.h"
+ #include "arch/aarch64-scalable-linux.h"
+ #include "linux-aarch32-tdesc.h"
+@@ -911,6 +912,10 @@ aarch64_adjust_register_sets (const struct aarch64_features &features)
+ 	  if (features.sme2)
+ 	    regset->size = AARCH64_SME2_ZT0_SIZE;
+ 	  break;
++	case NT_ARM_GCS:
++	  if (features.gcs)
++	    regset->size = AARCH64_LINUX_SIZEOF_GCS;
++	  break;
+ 	default:
+ 	  gdb_assert_not_reached ("Unknown register set found.");
+ 	}
+diff --git a/include/elf/common.h b/include/elf/common.h
+index c9920e7731a..09d11ae586b 100644
+--- a/include/elf/common.h
++++ b/include/elf/common.h
+@@ -739,6 +739,9 @@
+ 					/*   Note: name must be "LINUX".  */
+ #define NT_ARM_ZT       0x40d           /* AArch64 SME2 ZT registers.  */
+ 					/*   Note: name must be "LINUX".  */
++#define NT_ARM_GCS	0x40e		/* AArch64 Guarded Control Stack
++					   registers.  */
++					/*   Note  name must be "LINUX".  */
+ #define NT_ARC_V2	0x600		/* ARC HS accumulator/extra registers.  */
+ 					/*   note name must be "LINUX".  */
+ #define NT_LARCH_CPUCFG 0xa00		/* LoongArch CPU config registers */
+-- 
+2.25.1
+
+
+From 86d0ae5d87e12d886ceb1e0bed504acfa764c40e Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Fri, 22 Dec 2023 15:31:03 -0300
+Subject: [PATCH 04/27] gdb/aarch64-linux: Implement GCS signal frame context.
+
+---
+ gdb/aarch64-linux-tdep.c               | 56 +++++++++++++++
+ gdb/arch/aarch64-gcs-linux.h           |  5 ++
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 96 +++++++++++++++++++++++++-
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  8 ++-
+ 4 files changed, 162 insertions(+), 3 deletions(-)
+
+diff --git a/gdb/aarch64-linux-tdep.c b/gdb/aarch64-linux-tdep.c
+index d4e948d3b37..ff08913cf09 100644
+--- a/gdb/aarch64-linux-tdep.c
++++ b/gdb/aarch64-linux-tdep.c
+@@ -162,6 +162,7 @@
+ #define AARCH64_ZA_MAGIC			0x54366345
+ #define AARCH64_TPIDR2_MAGIC			0x54504902
+ #define AARCH64_ZT_MAGIC			0x5a544e01
++#define AARCH64_GCS_MAGIC			0x47435300
+ 
+ /* Defines for the extra_context that follows an AARCH64_EXTRA_MAGIC.  */
+ #define AARCH64_EXTRA_DATAP_OFFSET		8
+@@ -203,6 +204,11 @@
+    the signal context state.  */
+ #define AARCH64_SME2_CONTEXT_REGS_OFFSET	16
+ 
++/* GCSPR register value offset in the GCS signal frame context.  */
++#define AARCH64_GCS_CONTEXT_GCSPR_OFFSET	8
++/* features_enabled value offset in the GCS signal frame context.  */
++#define AARCH64_GCS_CONTEXT_FEATURES_ENABLED_OFFSET	16
++
+ /* Holds information about the signal frame.  */
+ struct aarch64_linux_sigframe
+ {
+@@ -243,6 +249,13 @@ struct aarch64_linux_sigframe
+   bool za_payload = false;
+   /* True if we have a ZT entry in the signal context, false otherwise.  */
+   bool zt_available = false;
++
++  /* True if we have a GCS entry in the signal context, false otherwise.  */
++  bool gcs_availabe = false;
++  /* The Guarded Control Stack Pointer Register.  */
++  uint64_t gcspr;
++  /* Flags indicating which GCS features are enabled for the thread.  */
++  uint64_t gcs_features_enabled;
+ };
+ 
+ /* Read an aarch64_ctx, returning the magic value, and setting *SIZE to the
+@@ -523,6 +536,40 @@ aarch64_linux_read_signal_frame_info (const frame_info_ptr &this_frame,
+ 	    signal_frame.zt_section = section;
+ 	    signal_frame.zt_available = true;
+ 
++	    section += size;
++	    break;
++	  }
++	case AARCH64_GCS_MAGIC:
++	  {
++	    gdb_byte buf[8];
++
++	    /* Extract the GCSPR.  */
++	    if (target_read_memory (section + AARCH64_GCS_CONTEXT_GCSPR_OFFSET,
++				    buf, 8) != 0)
++	      {
++		warning (_("Failed to read the GCSPR from the GCS signal frame"
++			   " context."));
++		section += size;
++		break;
++	      }
++
++	    signal_frame.gcspr = extract_unsigned_integer (buf, 8, byte_order);
++
++	    /* Extract the features_enabled field.  */
++	    if (target_read_memory (section
++				    + AARCH64_GCS_CONTEXT_FEATURES_ENABLED_OFFSET,
++				    buf, 8) != 0)
++	      {
++		warning (_("Failed to read the enabled features from the GCS"
++			   " signal frame context."));
++		section += size;
++		break;
++	      }
++
++	    // FIXME: This field is currently unused by GDB.
++	    signal_frame.gcs_features_enabled
++		= extract_unsigned_integer (buf, 8, byte_order);
++	    signal_frame.gcs_availabe = true;
+ 	    section += size;
+ 	    break;
+ 	  }
+@@ -700,6 +747,15 @@ aarch64_linux_sigframe_init (const struct tramp_frame *self,
+ 			       + AARCH64_TPIDR2_CONTEXT_TPIDR2_OFFSET);
+     }
+ 
++  /* Restore the GCSPR register, if the target supports it and if there is
++     an entry for it.  */
++  if (signal_frame.gcs_availabe && tdep->has_gcs ())
++    {
++      /* Restore GCSPR.  */
++      trad_frame_set_reg_value (this_cache, tdep->gcs_reg_base,
++				signal_frame.gcspr);
++    }
++
+   trad_frame_set_id (this_cache, frame_id_build (signal_frame.sp, func));
+ }
+ 
+diff --git a/gdb/arch/aarch64-gcs-linux.h b/gdb/arch/aarch64-gcs-linux.h
+index 8da12325c79..65f70a72b15 100644
+--- a/gdb/arch/aarch64-gcs-linux.h
++++ b/gdb/arch/aarch64-gcs-linux.h
+@@ -30,6 +30,9 @@
+ /* The GCS regset consists of a single 64-bit register.  */
+ #define AARCH64_LINUX_SIZEOF_GCS 8
+ 
++/* Make sure we only define these if the kernel header doesn't.  */
++#ifndef GCS_MAGIC
++
+ /* GCS state (NT_ARM_GCS).  */
+ 
+ struct user_gcs
+@@ -39,4 +42,6 @@ struct user_gcs
+   uint64_t gcspr_el0;
+ };
+ 
++#endif /* GCS_MAGIC */
++
+ #endif /* ARCH_AARCH64_GCS_LINUX_H */
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index a450ad0dab6..1364dd857a2 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -15,8 +15,102 @@
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+ 
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/auxv.h>
++#include <sys/syscall.h>
++#include <linux/prctl.h>
++
++/* Feature check for Guarded Control Stack.  */
++#ifndef HWCAP2_GCS
++#define HWCAP2_GCS (1UL << 48)
++#endif
++
++#ifndef PR_GET_SHADOW_STACK_STATUS
++#define PR_GET_SHADOW_STACK_STATUS 71
++#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_SHADOW_STACK_ENABLE (1UL << 0)
++#endif
++
++/*
++ * We need to use a macro to call prctl because after GCS is enabled, it's not
++ * possible to return from the function which enabled it.  This is because the
++ * return address of the calling function isn't on the GCS.
++ */
++#define my_syscall2(num, arg1, arg2)					\
++  ({									\
++    register long _num __asm__("x8") = (num);				\
++    register long _arg1 __asm__("x0") = (long)(arg1);			\
++    register long _arg2 __asm__("x1") = (long)(arg2);			\
++    register long _arg3 __asm__("x2") = 0;				\
++    register long _arg4 __asm__("x3") = 0;				\
++    register long _arg5 __asm__("x4") = 0;				\
++									\
++    __asm__ volatile("svc #0\n"						\
++		     : "=r"(_arg1)					\
++		     : "r"(_arg1), "r"(_arg2), "r"(_arg3), "r"(_arg4),	\
++		       "r"(_arg5), "r"(_num)				\
++		     : "memory", "cc");					\
++    _arg1;								\
++  })
++
++#define get_gcspr(void)							\
++  ({									\
++    unsigned long *gcspr;						\
++									\
++    asm volatile("mrs	%0, S3_3_C2_C5_1" : "=r"(gcspr) : : "cc");	\
++									\
++    gcspr;								\
++  })
++
++static void __attribute__ ((noinline))
++function1 (int arg)
++{
++  printf ("Called function1 with argument %d\n", arg);
++}
++
+ int
+ main (void)
+ {
+-  return 0;
++  unsigned long gcs_mode, *gcspr;
++  int ret;
++
++  if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
++    return EXIT_FAILURE;
++
++  /*
++   * Force shadow stacks on, our tests *should* be fine with or
++   * without libc support and with or without this having ended
++   * up tagged for GCS and enabled by the dynamic linker.  We
++   * can't use the libc prctl() function since we can't return
++   * from enabling the stack.  Also lock GCS if not already
++   * locked so we can test behaviour when it's locked.
++   */
++  ret = my_syscall2 (__NR_prctl, PR_GET_SHADOW_STACK_STATUS, &gcs_mode);
++  if (ret)
++    {
++      fprintf (stderr, "Failed to read GCS state: %d\n", ret);
++      return EXIT_FAILURE;
++    }
++
++  if (!(gcs_mode & PR_SHADOW_STACK_ENABLE))
++    {
++      gcs_mode = PR_SHADOW_STACK_ENABLE;
++      ret = my_syscall2 (__NR_prctl, PR_SET_SHADOW_STACK_STATUS, gcs_mode);
++      if (ret)
++	{
++	  fprintf (stderr, "Failed to configure GCS: %d\n", ret);
++	  return EXIT_FAILURE;
++	}
++    }
++
++  function1 (1);  /* break here */
++
++  gcspr = get_gcspr ();
++
++  /* Cause a SEGV.  */
++  *gcspr = 1;
++
++  /* Avoid returning in case libc doesn't understand GCS */
++  exit (EXIT_SUCCESS);
+ }
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index f3a2c2b6aa0..c207c62be8f 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -23,8 +23,12 @@ if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+     return -1
+ }
+ 
+-if ![runto_main] {
+-    return -1
++set linespec ${srcfile}:[gdb_get_line_number "break here"]
++
++if ![runto ${linespec}] {
++    return
+ }
+ 
+ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
++
++gdb_test "next" "signal \\(SIGSEGV.*" "next to signal"
+-- 
+2.25.1
+
+
+From 1278edbd8a220db7e631f1e5110c74f8d1f60a5c Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 27 Dec 2023 23:13:30 -0300
+Subject: [PATCH 05/27] gdb.arch/aarch64-gcs.exp: Fix provoking of SEGV
+
+Also, improve check of $gcspr by comparing with inferior's gcspr.
+
+The SEGV doesn't have the expected si_code = 10 (SEGV_CPERR: Control
+protection fault) though:
+
+  continue
+  Continuing.
+  gcspr = 0xfffff7e0fff8
+
+  Program received signal SIGSEGV, Segmentation fault.
+  0x0000aaaaaaaa0a54 in main () at /home/bauermann/src/binutils-gdb/gdb/testsuite/gdb.arch/aarch64-gcs.c:114
+  114	  *stack = 1;
+  (gdb) PASS: gdb.arch/aarch64-gcs.exp: continue to SEGV
+  print $_siginfo.si_code
+  $3 = 2
+  (gdb) FAIL: gdb.arch/aarch64-gcs.exp: Test value of si_code when GCS SIGSEGV happens
+  testcase /home/bauermann/src/binutils-gdb/gdb/testsuite/gdb.arch/aarch64-gcs.exp completed in 160 seconds
+
+Note: si_code = 2 is SEGV_ACCERR: invalid permissions for mapped object.
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 56 +++++++++++++-------------
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  7 +++-
+ 2 files changed, 35 insertions(+), 28 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index 1364dd857a2..9c3b67619ad 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -18,7 +18,9 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <sys/auxv.h>
++#include <sys/mman.h>
+ #include <sys/syscall.h>
++#include <unistd.h>
+ #include <linux/prctl.h>
+ 
+ /* Feature check for Guarded Control Stack.  */
+@@ -32,11 +34,13 @@
+ #define PR_SHADOW_STACK_ENABLE (1UL << 0)
+ #endif
+ 
+-/*
+- * We need to use a macro to call prctl because after GCS is enabled, it's not
+- * possible to return from the function which enabled it.  This is because the
+- * return address of the calling function isn't on the GCS.
+- */
++#ifndef __NR_map_shadow_stack
++#define __NR_map_shadow_stack 453
++#endif
++
++/* We need to use a macro to call prctl because after GCS is enabled, it's not
++   possible to return from the function which enabled it.  This is because the
++   return address of the calling function isn't on the GCS.  */
+ #define my_syscall2(num, arg1, arg2)					\
+   ({									\
+     register long _num __asm__("x8") = (num);				\
+@@ -63,30 +67,20 @@
+     gcspr;								\
+   })
+ 
+-static void __attribute__ ((noinline))
+-function1 (int arg)
+-{
+-  printf ("Called function1 with argument %d\n", arg);
+-}
+-
+ int
+ main (void)
+ {
+-  unsigned long gcs_mode, *gcspr;
+-  int ret;
+-
+   if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
+     return EXIT_FAILURE;
+ 
+-  /*
+-   * Force shadow stacks on, our tests *should* be fine with or
+-   * without libc support and with or without this having ended
+-   * up tagged for GCS and enabled by the dynamic linker.  We
+-   * can't use the libc prctl() function since we can't return
+-   * from enabling the stack.  Also lock GCS if not already
+-   * locked so we can test behaviour when it's locked.
+-   */
+-  ret = my_syscall2 (__NR_prctl, PR_GET_SHADOW_STACK_STATUS, &gcs_mode);
++  /* Force shadow stacks on, our tests *should* be fine with or
++     without libc support and with or without this having ended
++     up tagged for GCS and enabled by the dynamic linker.  We
++     can't use the libc prctl() function since we can't return
++     from enabling the stack.  Also lock GCS if not already
++     locked so we can test behaviour when it's locked.  */
++  unsigned long gcs_mode;
++  int ret = my_syscall2 (__NR_prctl, PR_GET_SHADOW_STACK_STATUS, &gcs_mode);
+   if (ret)
+     {
+       fprintf (stderr, "Failed to read GCS state: %d\n", ret);
+@@ -104,13 +98,21 @@ main (void)
+ 	}
+     }
+ 
+-  function1 (1);  /* break here */
++  unsigned long *gcspr = get_gcspr ();
++
++  /* Do something with gcspr, to make sure it isn't compiled out.  */
++  printf ("gcspr = %p\n", gcspr); /* break here */
+ 
+-  gcspr = get_gcspr ();
++  unsigned long *stack = (unsigned long *) syscall (__NR_map_shadow_stack,
++						    0 /* address */,
++						    sysconf (_SC_PAGE_SIZE) /* size */,
++						    0 /* flags */);
++  if (stack == MAP_FAILED)
++    exit (EXIT_FAILURE);
+ 
+   /* Cause a SEGV.  */
+-  *gcspr = 1;
++  *stack = 1;
+ 
+-  /* Avoid returning in case libc doesn't understand GCS */
++  /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (EXIT_SUCCESS);
+ }
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index c207c62be8f..a6baba0a12e 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -30,5 +30,10 @@ if ![runto ${linespec}] {
+ }
+ 
+ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
++gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
+ 
+-gdb_test "next" "signal \\(SIGSEGV.*" "next to signal"
++gdb_test "continue" \
++    ".*\r\nProgram received signal SIGSEGV, Segmentation fault\\..*stack = 1;" \
++    "continue to SEGV"
++gdb_test "print \$_siginfo.si_code" ". = 10" \
++    "Test value of si_code when GCS SIGSEGV happens"
+-- 
+2.25.1
+
+
+From 8e05d6fe003c283c381cc0d92c6aac6eec6199b0 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Thu, 28 Dec 2023 00:25:07 -0300
+Subject: [PATCH 06/27] gdb.arch/aarch64-gcs.exp: Simplify the testcase a bit.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 20 ++------------------
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  6 +++---
+ 2 files changed, 5 insertions(+), 21 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index 9c3b67619ad..a3c6de2032c 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -18,9 +18,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <sys/auxv.h>
+-#include <sys/mman.h>
+ #include <sys/syscall.h>
+-#include <unistd.h>
+ #include <linux/prctl.h>
+ 
+ /* Feature check for Guarded Control Stack.  */
+@@ -34,10 +32,6 @@
+ #define PR_SHADOW_STACK_ENABLE (1UL << 0)
+ #endif
+ 
+-#ifndef __NR_map_shadow_stack
+-#define __NR_map_shadow_stack 453
+-#endif
+-
+ /* We need to use a macro to call prctl because after GCS is enabled, it's not
+    possible to return from the function which enabled it.  This is because the
+    return address of the calling function isn't on the GCS.  */
+@@ -100,18 +94,8 @@ main (void)
+ 
+   unsigned long *gcspr = get_gcspr ();
+ 
+-  /* Do something with gcspr, to make sure it isn't compiled out.  */
+-  printf ("gcspr = %p\n", gcspr); /* break here */
+-
+-  unsigned long *stack = (unsigned long *) syscall (__NR_map_shadow_stack,
+-						    0 /* address */,
+-						    sysconf (_SC_PAGE_SIZE) /* size */,
+-						    0 /* flags */);
+-  if (stack == MAP_FAILED)
+-    exit (EXIT_FAILURE);
+-
+-  /* Cause a SEGV.  */
+-  *stack = 1;
++  /* Cause a SIGSEGV.  */
++  *gcspr = 1;
+ 
+   /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (EXIT_SUCCESS);
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index a6baba0a12e..375eaa05e36 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -23,7 +23,7 @@ if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+     return -1
+ }
+ 
+-set linespec ${srcfile}:[gdb_get_line_number "break here"]
++set linespec ${srcfile}:[gdb_get_line_number "Cause a SIGSEGV"]
+ 
+ if ![runto ${linespec}] {
+     return
+@@ -33,7 +33,7 @@ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+ gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
+ 
+ gdb_test "continue" \
+-    ".*\r\nProgram received signal SIGSEGV, Segmentation fault\\..*stack = 1;" \
+-    "continue to SEGV"
++    ".*\r\nProgram received signal SIGSEGV, Segmentation fault\\..*gcspr = 1;" \
++    "continue to SIGSEGV"
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+     "Test value of si_code when GCS SIGSEGV happens"
+-- 
+2.25.1
+
+
+From 21ee3d1aa8bf5baee7b95982d9f945f60a806254 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Thu, 28 Dec 2023 23:52:18 -0300
+Subject: [PATCH 07/27] gdb.arch/aarch64-gcs.exp: Finally cause SIGSEGV with
+ the GCS-specific si_code.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 17 +++++++++++++++--
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  4 ++--
+ 2 files changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index a3c6de2032c..17b4c6cbb02 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -61,6 +61,19 @@
+     gcspr;								\
+   })
+ 
++/* Corrupt the return address to see if GDB will report a SIGSEGV with the expected
++   $_siginfo.si_code.  */
++static void __attribute__ ((noinline))
++function (unsigned long *gcspr)
++{
++  /* x30 holds the return address.  */
++  register long x30 __asm__("x30") __attribute__ ((unused));
++
++  /* Cause a GCS exception.  */
++  x30 = 0;
++  __asm__ volatile("ret\n");
++}
++
+ int
+ main (void)
+ {
+@@ -94,8 +107,8 @@ main (void)
+ 
+   unsigned long *gcspr = get_gcspr ();
+ 
+-  /* Cause a SIGSEGV.  */
+-  *gcspr = 1;
++  /* Pass gscpr to function just so it's used for something.  */
++  function (gcspr);  /* Break here.  */
+ 
+   /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (EXIT_SUCCESS);
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index 375eaa05e36..d52b84c4d6f 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -23,7 +23,7 @@ if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+     return -1
+ }
+ 
+-set linespec ${srcfile}:[gdb_get_line_number "Cause a SIGSEGV"]
++set linespec ${srcfile}:[gdb_get_line_number "Break here"]
+ 
+ if ![runto ${linespec}] {
+     return
+@@ -33,7 +33,7 @@ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+ gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
+ 
+ gdb_test "continue" \
+-    ".*\r\nProgram received signal SIGSEGV, Segmentation fault\\..*gcspr = 1;" \
++    {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
+     "continue to SIGSEGV"
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+     "Test value of si_code when GCS SIGSEGV happens"
+-- 
+2.25.1
+
+
+From 6e6125d9c190dff9db27c565b90e8dc750f543dc Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Tue, 2 Jan 2024 22:57:45 -0300
+Subject: [PATCH 08/27] gdb.arch/aarch64-gcs.exp: Test unwinding of signal
+ frame GCS context
+
+Unfortunately one tests fails:
+
+  #5  0x0000aaaaaaaa0ac4 in main () at /home/bauermann/src/binutils-gdb/gdb/testsuite/gdb.arch/aarch64-gcs.c:128
+  128	  raise (SIGUSR1);
+  (gdb) print $gcspr
+  $3 = (void *) 0xfffff7e0ffe0
+  (gdb) PASS: gdb.arch/aarch64-gcs.exp: GCSPR unwound from signal frame
+  print $gcspr_in_main == $gcspr
+  $4 = 0
+  (gdb) FAIL: gdb.arch/aarch64-gcs.exp: Unwound GCSPR is correct
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   | 24 +++++++++++-
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp | 52 ++++++++++++++++++++++++++
+ 2 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index 17b4c6cbb02..c187528c448 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -17,6 +17,7 @@
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <signal.h>
+ #include <sys/auxv.h>
+ #include <sys/syscall.h>
+ #include <linux/prctl.h>
+@@ -61,6 +62,14 @@
+     gcspr;								\
+   })
+ 
++static unsigned long *handler_gcspr = 0;
++
++static void
++handler (int sig)
++{
++  handler_gcspr = get_gcspr ();
++}
++
+ /* Corrupt the return address to see if GDB will report a SIGSEGV with the expected
+    $_siginfo.si_code.  */
+ static void __attribute__ ((noinline))
+@@ -70,7 +79,7 @@ function (unsigned long *gcspr)
+   register long x30 __asm__("x30") __attribute__ ((unused));
+ 
+   /* Cause a GCS exception.  */
+-  x30 = 0;
++  x30 = 0xbadc0ffee;
+   __asm__ volatile("ret\n");
+ }
+ 
+@@ -107,8 +116,19 @@ main (void)
+ 
+   unsigned long *gcspr = get_gcspr ();
+ 
++  struct sigaction act = { 0 };
++
++  act.sa_handler = &handler;	/* Break here.  */
++  if (sigaction (SIGUSR1, &act, NULL) == -1)
++    {
++      perror ("sigaction");
++      exit (EXIT_FAILURE);
++    }
++
++  raise (SIGUSR1);
++
+   /* Pass gscpr to function just so it's used for something.  */
+-  function (gcspr);  /* Break here.  */
++  function (gcspr);
+ 
+   /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (EXIT_SUCCESS);
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index d52b84c4d6f..22461d5d947 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -31,9 +31,61 @@ if ![runto ${linespec}] {
+ 
+ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+ gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
++gdb_test_no_output "set \$gcspr_in_main = \$gcspr" "Save GCSPR value for later"
++
++gdb_test "break handler" "Breakpoint \[0-9\]+ .*aarch64-gcs.c, line \[0-9\]+\\."
++gdb_test "handle SIGUSR1 nostop" \
++    ".*\r\nSIGUSR1\\s+No\\s+Yes\\s+Yes\\s+User defined signal 1" \
++    "Let the inferior receive SIGUSR1 uninterrupted"
++gdb_test "continue" \
++    ".*\r\nBreakpoint \[0-9\]+, handler \\(sig=10\\) at .*aarch64-gcs.c.*handler_gcspr = get_gcspr \\(\\);" \
++    "continue to signal handler"
++
++set frame_levels 0
++# Go to main's frame, or at least stop at the most outer frame possible
++while { $frame_levels < 10 } {
++    gdb_test_multiple "up" "" {
++	-re -wrap "#\[0-9\]+  main \\(\\)\r\n\\s+at .*aarch64-gcs.c:\[0-9\]+\r\n\[0-9\]+\s+raise \(SIGUSR1\);" {
++	    # We're done.
++	    break
++	}
++	-re -wrap "#\[0-9\]+  <signal handler called>" {
++	    # Matches the signal handler frame.
++	    # Continue iterating.
++	}
++	-re -wrap "#\[0-9\]+  $hex in \S+ \\(\\)" {
++	    # Matches frame without debug information.
++	    # Continue iterating.
++	}
++	-re -wrap "#\[0-9\]+  (?:$hex in )?\\S+ \\(.*\\) at .*\\S+:\[0-9\]+\r\n(?:warning:.*: No such file or directory|\[0-9\]+\\s+in \\S+)" {
++	    # Matches frame with debug information. We may not have source code
++	    # for system libraries though.
++	    # Continue iterating.
++	}
++	-re -wrap "\[^\r\n\]+" {
++	    # Unexpected output.  Maybe can't unwind frame any further?
++	    break;
++	}
++    }
++
++    incr frame_levels
++}
++
++if { $frame_levels > 0 } {
++    gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" \
++	"GCSPR unwound from signal frame"
++    gdb_test "print \$gcspr_in_main == \$gcspr" ". = 1" \
++	"Unwound GCSPR is correct"
++} else {
++    # We can't test unwinding GCSPR from the signal frame in this case.
++    fail "Unable to unwind signal handler stack"
++}
+ 
+ gdb_test "continue" \
+     {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
+     "continue to SIGSEGV"
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+     "Test value of si_code when GCS SIGSEGV happens"
++# The GCS grows down.
++gdb_test "print \$gcspr == \$gcspr_in_main - 8" ". = 1" \
++    "Test value of GCSPR when GCS SIGSEGV happens"
+-- 
+2.25.1
+
+
+From d98f955aa34fc33fb5dafe46b3409f8ff01140ca Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 3 Jan 2024 22:45:58 -0300
+Subject: [PATCH 09/27] gdb.arch/aarch64-gcs.exp: Fix testing of GCSPR in
+ signal context
+
+I realised that if the inferior doesn't save the GCSPR in its function
+prologues, then GDB can't unwind it all the way back to the main frame.
+
+Therefore, test it just above the special <signal handler called> frame.
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp | 52 ++++++--------------------
+ 1 file changed, 12 insertions(+), 40 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index 22461d5d947..f57f6c5043d 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -31,7 +31,8 @@ if ![runto ${linespec}] {
+ 
+ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+ gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
+-gdb_test_no_output "set \$gcspr_in_main = \$gcspr" "Save GCSPR value for later"
++gdb_test_no_output "set \$gcspr_in_main = \$gcspr" \
++    "Save GCSPR value in main for later"
+ 
+ gdb_test "break handler" "Breakpoint \[0-9\]+ .*aarch64-gcs.c, line \[0-9\]+\\."
+ gdb_test "handle SIGUSR1 nostop" \
+@@ -41,45 +42,16 @@ gdb_test "continue" \
+     ".*\r\nBreakpoint \[0-9\]+, handler \\(sig=10\\) at .*aarch64-gcs.c.*handler_gcspr = get_gcspr \\(\\);" \
+     "continue to signal handler"
+ 
+-set frame_levels 0
+-# Go to main's frame, or at least stop at the most outer frame possible
+-while { $frame_levels < 10 } {
+-    gdb_test_multiple "up" "" {
+-	-re -wrap "#\[0-9\]+  main \\(\\)\r\n\\s+at .*aarch64-gcs.c:\[0-9\]+\r\n\[0-9\]+\s+raise \(SIGUSR1\);" {
+-	    # We're done.
+-	    break
+-	}
+-	-re -wrap "#\[0-9\]+  <signal handler called>" {
+-	    # Matches the signal handler frame.
+-	    # Continue iterating.
+-	}
+-	-re -wrap "#\[0-9\]+  $hex in \S+ \\(\\)" {
+-	    # Matches frame without debug information.
+-	    # Continue iterating.
+-	}
+-	-re -wrap "#\[0-9\]+  (?:$hex in )?\\S+ \\(.*\\) at .*\\S+:\[0-9\]+\r\n(?:warning:.*: No such file or directory|\[0-9\]+\\s+in \\S+)" {
+-	    # Matches frame with debug information. We may not have source code
+-	    # for system libraries though.
+-	    # Continue iterating.
+-	}
+-	-re -wrap "\[^\r\n\]+" {
+-	    # Unexpected output.  Maybe can't unwind frame any further?
+-	    break;
+-	}
+-    }
+-
+-    incr frame_levels
+-}
+-
+-if { $frame_levels > 0 } {
+-    gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" \
+-	"GCSPR unwound from signal frame"
+-    gdb_test "print \$gcspr_in_main == \$gcspr" ". = 1" \
+-	"Unwound GCSPR is correct"
+-} else {
+-    # We can't test unwinding GCSPR from the signal frame in this case.
+-    fail "Unable to unwind signal handler stack"
+-}
++gdb_test_no_output "set \$gcspr_in_handler = \$gcspr" \
++    "Save GCSPR value in handler for later"
++# Select the frame above the <signal handler called> frame, which makes GDB
++# unwind the GCSPR from the signal frame GCS context.
++gdb_test "frame 2" \
++    "#2  ($hex in )?\\S+ \\(.*\\) (at|from) \\S+(\r\n(warning:.*: No such file or directory|\[0-9\]+\\s+in \\S+))?" \
++    "Reached frame 2"
++gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GCSPR in frame level 2"
++gdb_test "print \$gcspr == \$gcspr_in_handler + 8" ". = 1" \
++    "GCSPR unwound from signal context is correct"
+ 
+ gdb_test "continue" \
+     {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
+-- 
+2.25.1
+
+
+From 4d7e2c852fc8558c30409c52dd28346fa62c0e03 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Fri, 5 Jan 2024 18:54:38 -0300
+Subject: [PATCH 10/27] bfd/aarch64-linux: Add support for reading and writing
+ the GCS core file note
+
+---
+ bfd/elf-bfd.h |  2 ++
+ bfd/elf.c     | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/bfd/elf-bfd.h b/bfd/elf-bfd.h
+index b89d3dda05d..325a0aa859e 100644
+--- a/bfd/elf-bfd.h
++++ b/bfd/elf-bfd.h
+@@ -2982,6 +2982,8 @@ extern char *elfcore_write_aarch_za
+   (bfd *, char *, int *, const void *, int);
+ extern char *elfcore_write_aarch_zt
+   (bfd *, char *, int *, const void *, int);
++extern char *elfcore_write_aarch_gcs
++  (bfd *, char *, int *, const void *_gcs, int);
+ extern char *elfcore_write_arc_v2
+   (bfd *, char *, int *, const void *, int);
+ extern char *elfcore_write_riscv_csr
+diff --git a/bfd/elf.c b/bfd/elf.c
+index f85f79e1e35..1de08abc209 100644
+--- a/bfd/elf.c
++++ b/bfd/elf.c
+@@ -10584,6 +10584,15 @@ elfcore_grok_aarch_zt (bfd *abfd, Elf_Internal_Note *note)
+   return elfcore_make_note_pseudosection (abfd, ".reg-aarch-zt", note);
+ }
+ 
++/* Convert NOTE into a bfd_section called ".reg-aarch-gcs".  Return TRUE if
++   successful, otherwise return FALSE.  */
++
++static bool
++elfcore_grok_aarch_gcs (bfd *abfd, Elf_Internal_Note *note)
++{
++  return elfcore_make_note_pseudosection (abfd, ".reg-aarch-gcs", note);
++}
++
+ static bool
+ elfcore_grok_arc_v2 (bfd *abfd, Elf_Internal_Note *note)
+ {
+@@ -11320,6 +11329,12 @@ elfcore_grok_note (bfd *abfd, Elf_Internal_Note *note)
+       else
+ 	return true;
+ 
++    case NT_ARM_GCS:
++      if (note->namesz == 6 && strcmp (note->namedata, "LINUX") == 0)
++	return elfcore_grok_aarch_gcs (abfd, note);
++      else
++	return true;
++
+     case NT_GDB_TDESC:
+       if (note->namesz == 4
+ 	  && strcmp (note->namedata, "GDB") == 0)
+@@ -12981,6 +12996,17 @@ elfcore_write_aarch_zt (bfd *abfd,
+ 			     size);
+ }
+ 
++/* FIXME: Document.  */
++
++char *
++elfcore_write_aarch_gcs (bfd *abfd, char *buf, int *bufsiz,
++			 const void *aarch_gcs, int size)
++{
++  char *note_name = "LINUX";
++  return elfcore_write_note (abfd, buf, bufsiz, note_name, NT_ARM_GCS,
++			     aarch_gcs, size);
++}
++
+ char *
+ elfcore_write_arc_v2 (bfd *abfd,
+ 		      char *buf,
+@@ -13168,6 +13194,8 @@ elfcore_write_register_note (bfd *abfd,
+     return elfcore_write_aarch_za (abfd, buf, bufsiz, data, size);
+   if (strcmp (section, ".reg-aarch-zt") == 0)
+     return elfcore_write_aarch_zt (abfd, buf, bufsiz, data, size);
++  if (strcmp (section, ".reg-aarch-gcs") == 0)
++    return elfcore_write_aarch_gcs (abfd, buf, bufsiz, data, size);
+   if (strcmp (section, ".reg-arc-v2") == 0)
+     return elfcore_write_arc_v2 (abfd, buf, bufsiz, data, size);
+   if (strcmp (section, ".gdb-tdesc") == 0)
+-- 
+2.25.1
+
+
+From 02fb282e3671098b7ccc251fe2e451f402975d0e Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Mon, 8 Jan 2024 17:31:05 -0300
+Subject: [PATCH 11/27] gdb.arch/aarch64-gcs-core.exp: New test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's one failure:
+
+print/x $gcspr
+$1 = 0x1
+(gdb) FAIL: gdb.arch/aarch64-gcs-core.exp: native corefile: gcspr contents from core file
+
+Apparently the kernel¹ isn't saving the GCSPR correctly in the core file.
+
+¹ 6.7.0-rc2-00047-gc16ba0f4123b, with GCS patches v7.
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.c   | 116 ++++++++++++++++++++
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp |  90 +++++++++++++++
+ 2 files changed, 206 insertions(+)
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+new file mode 100644
+index 00000000000..0658a6b7b51
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+@@ -0,0 +1,116 @@
++/* This test program is part of GDB, the GNU debugger.
++
++   Copyright 2024 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/auxv.h>
++#include <linux/prctl.h>
++#include <sys/syscall.h>
++
++/* Feature check for Guarded Control Stack.  */
++#ifndef HWCAP2_GCS
++#define HWCAP2_GCS (1UL << 48)
++#endif
++
++#ifndef PR_GET_SHADOW_STACK_STATUS
++#define PR_GET_SHADOW_STACK_STATUS 71
++#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_SHADOW_STACK_ENABLE (1UL << 0)
++#endif
++
++/* We need to use a macro to call prctl because after GCS is enabled, it's not
++   possible to return from the function which enabled it.  This is because the
++   return address of the calling function isn't on the GCS.  */
++#define my_syscall2(num, arg1, arg2)					\
++  ({									\
++    register long _num __asm__("x8") = (num);				\
++    register long _arg1 __asm__("x0") = (long)(arg1);			\
++    register long _arg2 __asm__("x1") = (long)(arg2);			\
++    register long _arg3 __asm__("x2") = 0;				\
++    register long _arg4 __asm__("x3") = 0;				\
++    register long _arg5 __asm__("x4") = 0;				\
++									\
++    __asm__ volatile("svc #0\n"						\
++		     : "=r"(_arg1)					\
++		     : "r"(_arg1), "r"(_arg2), "r"(_arg3), "r"(_arg4),	\
++		       "r"(_arg5), "r"(_num)				\
++		     : "memory", "cc");					\
++    _arg1;								\
++  })
++
++#define get_gcspr(void)							\
++  ({									\
++    unsigned long *gcspr;						\
++									\
++    asm volatile("mrs	%0, S3_3_C2_C5_1" : "=r"(gcspr) : : "cc");	\
++									\
++    gcspr;								\
++  })
++
++/* Corrupt the return address to see if GDB will report a SIGSEGV with the
++   expected
++   $_siginfo.si_code.  */
++static void __attribute__ ((noinline))
++function (unsigned long *gcspr)
++{
++  /* x30 holds the return address.  */
++  register long x30 __asm__("x30") __attribute__ ((unused));
++
++  /* Cause a GCS exception.  */
++  x30 = 0xbadc0ffee;
++  __asm__ volatile("ret\n");
++}
++
++int
++main (void)
++{
++  if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
++    return EXIT_FAILURE;
++
++  /* Force shadow stacks on, our tests *should* be fine with or
++     without libc support and with or without this having ended
++     up tagged for GCS and enabled by the dynamic linker.  We
++     can't use the libc prctl() function since we can't return
++     from enabling the stack.  Also lock GCS if not already
++     locked so we can test behaviour when it's locked.  */
++  unsigned long gcs_mode;
++  int ret = my_syscall2 (__NR_prctl, PR_GET_SHADOW_STACK_STATUS, &gcs_mode);
++  if (ret)
++    {
++      fprintf (stderr, "Failed to read GCS state: %d\n", ret);
++      return EXIT_FAILURE;
++    }
++
++  if (!(gcs_mode & PR_SHADOW_STACK_ENABLE))
++    {
++      gcs_mode = PR_SHADOW_STACK_ENABLE;
++      ret = my_syscall2 (__NR_prctl, PR_SET_SHADOW_STACK_STATUS, gcs_mode);
++      if (ret)
++	{
++	  fprintf (stderr, "Failed to configure GCS: %d\n", ret);
++	  return EXIT_FAILURE;
++	}
++    }
++
++  unsigned long *gcspr = get_gcspr ();
++
++  /* Pass gscpr to function just so it's used for something.  */
++  function (gcspr);        /* Break here.  */
++
++  /* Avoid returning, in case libc doesn't understand GCS.  */
++  exit (EXIT_SUCCESS);
++}
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+new file mode 100644
+index 00000000000..a0c81b789c6
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -0,0 +1,90 @@
++# Copyright 2024 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++
++# Test reading and writing the core dump of a binary that uses a Guarded Control
++# Stack.
++
++proc check_core_file {core_filename saved_gcspr} {
++    # Load the core file.
++    if [gdb_test "core $core_filename" \
++	    [multi_line \
++		 "Core was generated by.*\." \
++		 "Program terminated with signal SIGSEGV, Segmentation fault\." \
++		 "#0  function \\(.*\\) at .*" \
++		 "\[0-9\]+.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
++	    "load core file"] {
++	untested "failed to load core file"
++	return -1
++    }
++
++    # Check the value of TPIDR2 in the core file.
++    gdb_test "print/x \$gcspr" "\\$\[0-9\]+ = $saved_gcspr" \
++	"gcspr contents from core file"
++}
++
++require allow_aarch64_gcs_tests
++
++standard_testfile
++
++if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
++    return -1
++}
++
++set linespec ${srcfile}:[gdb_get_line_number "Break here"]
++
++if ![runto ${linespec}] {
++    return
++}
++
++# Continue until a crash.
++gdb_test "continue" \
++    {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
++    "continue to SIGSEGV"
++
++set gcspr_at_segv [get_valueof "/x" "\$gcspr" "*unknown*"]
++
++# Generate the gcore core file.
++set gcore_filename [standard_output_file "${testfile}.gcore"]
++set gcore_generated [gdb_gcore_cmd "$gcore_filename" "generate gcore file"]
++
++# Generate a native core file.
++set core_filename [core_find ${binfile} {} {}]
++set core_generated [expr {$core_filename != ""}]
++set native_core_name "${binfile}.core"
++remote_exec build "mv $core_filename ${native_core_name}"
++set core_filename ${native_core_name}
++
++# At this point we have a couple of core files, the gcore one generated by
++# GDB and the native one generated by the Linux kernel.  Make sure GDB can
++# read both correctly.
++if {$gcore_generated} {
++    clean_restart ${binfile}
++
++    with_test_prefix "gcore corefile" {
++	check_core_file $gcore_filename $gcspr_at_segv
++    }
++} else {
++    fail "gcore corefile not generated"
++}
++
++if {$core_generated} {
++    clean_restart ${binfile}
++
++    with_test_prefix "native corefile" {
++	check_core_file $core_filename $gcspr_at_segv
++    }
++} else {
++    untested "native corefile not generated"
++}
+-- 
+2.25.1
+
+
+From bea69037da4f7831019044942c765f85893163b7 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Sat, 3 Feb 2024 15:40:51 -0300
+Subject: [PATCH 12/27] gdb/aarch64-linux: Fix core file offset for the GCSPR.
+
+---
+ gdb/aarch64-linux-tdep.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/gdb/aarch64-linux-tdep.c b/gdb/aarch64-linux-tdep.c
+index ff08913cf09..60bfddd840a 100644
+--- a/gdb/aarch64-linux-tdep.c
++++ b/gdb/aarch64-linux-tdep.c
+@@ -1669,6 +1669,8 @@ aarch64_linux_iterate_over_regset_sections (struct gdbarch *gdbarch,
+       /* Create this on the fly in order to handle the variable location.  */
+       const struct regcache_map_entry gcs_regmap[] =
+ 	{
++	  { 1, REGCACHE_MAP_SKIP, 8 },  /* features_enabled */
++	  { 1, REGCACHE_MAP_SKIP, 8 },  /* features_locked */
+ 	  { 1, tdep->gcs_reg_base, 8 },
+ 	  { 0 }
+ 	};
+-- 
+2.25.1
+
+
+From 586e825f7dfcd9d3550d503b2d18c39ff4851cfb Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Sat, 3 Feb 2024 18:09:52 -0300
+Subject: [PATCH 13/27] gdb.arch/aarch64-gcs-core: Fix test of kernel-generated
+ core file.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.c   |  4 ++++
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp | 12 ++++++++----
+ gdb/testsuite/lib/gdb.exp                   |  4 ++--
+ 3 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+index 0658a6b7b51..7508f7b77fa 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+@@ -70,6 +70,10 @@ function (unsigned long *gcspr)
+   /* x30 holds the return address.  */
+   register long x30 __asm__("x30") __attribute__ ((unused));
+ 
++  /* Print GCSPR to stdout so that the testcase can capture it.  */
++  printf ("%p\n", get_gcspr ());
++  fflush (stdout);
++
+   /* Cause a GCS exception.  */
+   x30 = 0xbadc0ffee;
+   __asm__ volatile("ret\n");
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+index a0c81b789c6..f97650b6bdd 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -53,14 +53,14 @@ gdb_test "continue" \
+     {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
+     "continue to SIGSEGV"
+ 
+-set gcspr_at_segv [get_valueof "/x" "\$gcspr" "*unknown*"]
++set gcspr_in_gcore [get_valueof "/x" "\$gcspr" "*unknown*"]
+ 
+ # Generate the gcore core file.
+ set gcore_filename [standard_output_file "${testfile}.gcore"]
+ set gcore_generated [gdb_gcore_cmd "$gcore_filename" "generate gcore file"]
+ 
+ # Generate a native core file.
+-set core_filename [core_find ${binfile} {} {}]
++set core_filename [core_find ${binfile} {} {} "${binfile}.out"]
+ set core_generated [expr {$core_filename != ""}]
+ set native_core_name "${binfile}.core"
+ remote_exec build "mv $core_filename ${native_core_name}"
+@@ -73,7 +73,7 @@ if {$gcore_generated} {
+     clean_restart ${binfile}
+ 
+     with_test_prefix "gcore corefile" {
+-	check_core_file $gcore_filename $gcspr_at_segv
++	check_core_file $gcore_filename $gcspr_in_gcore
+     }
+ } else {
+     fail "gcore corefile not generated"
+@@ -83,7 +83,11 @@ if {$core_generated} {
+     clean_restart ${binfile}
+ 
+     with_test_prefix "native corefile" {
+-	check_core_file $core_filename $gcspr_at_segv
++	set out_id [open ${binfile}.out "r"]
++	set gcspr_in_core [gets $out_id]
++
++	close $out_id
++	check_core_file $core_filename $gcspr_in_core
+     }
+ } else {
+     untested "native corefile not generated"
+diff --git a/gdb/testsuite/lib/gdb.exp b/gdb/testsuite/lib/gdb.exp
+index b5d35e6a4dc..7acb69e1910 100644
+--- a/gdb/testsuite/lib/gdb.exp
++++ b/gdb/testsuite/lib/gdb.exp
+@@ -8958,7 +8958,7 @@ proc remove_core {pid {test ""}} {
+     }
+ }
+ 
+-proc core_find {binfile {deletefiles {}} {arg ""}} {
++proc core_find {binfile {deletefiles {}} {arg ""} {output_file "/dev/null"}} {
+     global objdir subdir
+ 
+     set destcore "$binfile.core"
+@@ -8980,7 +8980,7 @@ proc core_find {binfile {deletefiles {}} {arg ""}} {
+     set found 0
+     set coredir [standard_output_file coredir.[getpid]]
+     file mkdir $coredir
+-    catch "system \"(cd ${coredir}; ulimit -c unlimited; ${binfile} ${arg}; true) >/dev/null 2>&1\""
++    catch "system \"(cd ${coredir}; ulimit -c unlimited; ${binfile} ${arg}; true) >${output_file} 2>&1\""
+     #      remote_exec host "${binfile}"
+     foreach i "${coredir}/core ${coredir}/core.coremaker.c ${binfile}.core" {
+ 	if [remote_file build exists $i] {
+-- 
+2.25.1
+
+
+From 357d0921cabdf9fb16b7193b0fb4c713988c8af7 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Sat, 3 Feb 2024 18:12:01 -0300
+Subject: [PATCH 14/27] gdb.arch/aarch64-gcs-core.exp: Move check_core_file
+ closer to use.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp | 37 +++++++++++----------
+ 1 file changed, 19 insertions(+), 18 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+index f97650b6bdd..2fd9abb04c3 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -16,24 +16,6 @@
+ # Test reading and writing the core dump of a binary that uses a Guarded Control
+ # Stack.
+ 
+-proc check_core_file {core_filename saved_gcspr} {
+-    # Load the core file.
+-    if [gdb_test "core $core_filename" \
+-	    [multi_line \
+-		 "Core was generated by.*\." \
+-		 "Program terminated with signal SIGSEGV, Segmentation fault\." \
+-		 "#0  function \\(.*\\) at .*" \
+-		 "\[0-9\]+.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
+-	    "load core file"] {
+-	untested "failed to load core file"
+-	return -1
+-    }
+-
+-    # Check the value of TPIDR2 in the core file.
+-    gdb_test "print/x \$gcspr" "\\$\[0-9\]+ = $saved_gcspr" \
+-	"gcspr contents from core file"
+-}
+-
+ require allow_aarch64_gcs_tests
+ 
+ standard_testfile
+@@ -69,6 +51,25 @@ set core_filename ${native_core_name}
+ # At this point we have a couple of core files, the gcore one generated by
+ # GDB and the native one generated by the Linux kernel.  Make sure GDB can
+ # read both correctly.
++
++proc check_core_file {core_filename saved_gcspr} {
++    # Load the core file.
++    if [gdb_test "core $core_filename" \
++	    [multi_line \
++		 "Core was generated by.*\." \
++		 "Program terminated with signal SIGSEGV, Segmentation fault\." \
++		 "#0  function \\(.*\\) at .*" \
++		 "\[0-9\]+.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
++	    "load core file"] {
++	untested "failed to load core file"
++	return -1
++    }
++
++    # Check the value of TPIDR2 in the core file.
++    gdb_test "print/x \$gcspr" "\\$\[0-9\]+ = $saved_gcspr" \
++	"gcspr contents from core file"
++}
++
+ if {$gcore_generated} {
+     clean_restart ${binfile}
+ 
+-- 
+2.25.1
+
+
+From 779bd7553c579d8a1c8e5264f754b20da4378c7b Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Sat, 3 Feb 2024 18:12:57 -0300
+Subject: [PATCH 15/27] gdb.arch/aarch64-gcs-core.exp: Don't use unnecessary {}
+ around variables.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+index 2fd9abb04c3..ea79174aef0 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -20,13 +20,13 @@ require allow_aarch64_gcs_tests
+ 
+ standard_testfile
+ 
+-if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
++if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+     return -1
+ }
+ 
+ set linespec ${srcfile}:[gdb_get_line_number "Break here"]
+ 
+-if ![runto ${linespec}] {
++if ![runto $linespec] {
+     return
+ }
+ 
+@@ -42,11 +42,11 @@ set gcore_filename [standard_output_file "${testfile}.gcore"]
+ set gcore_generated [gdb_gcore_cmd "$gcore_filename" "generate gcore file"]
+ 
+ # Generate a native core file.
+-set core_filename [core_find ${binfile} {} {} "${binfile}.out"]
++set core_filename [core_find $binfile {} {} "${binfile}.out"]
+ set core_generated [expr {$core_filename != ""}]
+ set native_core_name "${binfile}.core"
+-remote_exec build "mv $core_filename ${native_core_name}"
+-set core_filename ${native_core_name}
++remote_exec build "mv $core_filename $native_core_name"
++set core_filename $native_core_name
+ 
+ # At this point we have a couple of core files, the gcore one generated by
+ # GDB and the native one generated by the Linux kernel.  Make sure GDB can
+@@ -71,7 +71,7 @@ proc check_core_file {core_filename saved_gcspr} {
+ }
+ 
+ if {$gcore_generated} {
+-    clean_restart ${binfile}
++    clean_restart $binfile
+ 
+     with_test_prefix "gcore corefile" {
+ 	check_core_file $gcore_filename $gcspr_in_gcore
+@@ -81,7 +81,7 @@ if {$gcore_generated} {
+ }
+ 
+ if {$core_generated} {
+-    clean_restart ${binfile}
++    clean_restart $binfile
+ 
+     with_test_prefix "native corefile" {
+ 	set out_id [open ${binfile}.out "r"]
+-- 
+2.25.1
+
+
+From ff013e24ff2437674c3e40a2d69ec6a78477760f Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 7 Feb 2024 18:16:24 -0300
+Subject: [PATCH 16/27] Report when a SIGSEGV happens because of GCS.
+
+---
+ gdb/aarch64-linux-tdep.c                    | 18 ++++++++++++------
+ gdb/arch/aarch64-gcs-linux.h                |  4 ++++
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp | 20 +++++++++++++++-----
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp      |  8 +++++++-
+ 4 files changed, 38 insertions(+), 12 deletions(-)
+
+diff --git a/gdb/aarch64-linux-tdep.c b/gdb/aarch64-linux-tdep.c
+index 60bfddd840a..04bc46245f2 100644
+--- a/gdb/aarch64-linux-tdep.c
++++ b/gdb/aarch64-linux-tdep.c
+@@ -2682,17 +2682,18 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
+ {
+   aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (gdbarch);
+ 
+-  if (!tdep->has_mte () || siggnal != GDB_SIGNAL_SEGV)
++  if (!(tdep->has_mte () || tdep->has_gcs ()) || siggnal != GDB_SIGNAL_SEGV)
+     return;
+ 
+   CORE_ADDR fault_addr = 0;
+-  long si_code = 0;
++  long si_code = 0, si_errno = 0;
+ 
+   try
+     {
+       /* Sigcode tells us if the segfault is actually a memory tag
+ 	 violation.  */
+       si_code = parse_and_eval_long ("$_siginfo.si_code");
++      si_errno = parse_and_eval_long ("$_siginfo.si_errno");
+ 
+       fault_addr
+ 	= parse_and_eval_long ("$_siginfo._sifields._sigfault.si_addr");
+@@ -2703,13 +2704,18 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
+       return;
+     }
+ 
+-  /* If this is not a memory tag violation, just return.  */
+-  if (si_code != SEGV_MTEAERR && si_code != SEGV_MTESERR)
++  const char *meaning;
++
++  if (si_code == SEGV_MTEAERR || si_code == SEGV_MTESERR)
++    meaning = _("Memory tag violation");
++  else if (si_code == SEGV_CPERR && si_errno == 0)
++    meaning = _("Guarded Control Stack error");
++  else
+     return;
+ 
+   uiout->text ("\n");
+ 
+-  uiout->field_string ("sigcode-meaning", _("Memory tag violation"));
++  uiout->field_string ("sigcode-meaning", meaning);
+ 
+   /* For synchronous faults, show additional information.  */
+   if (si_code == SEGV_MTESERR)
+@@ -2734,7 +2740,7 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
+ 	  uiout->field_string ("logical-tag", hex_string (ltag));
+ 	}
+     }
+-  else
++  else if (si_code != SEGV_CPERR)
+     {
+       uiout->text ("\n");
+       uiout->text (_("Fault address unavailable"));
+diff --git a/gdb/arch/aarch64-gcs-linux.h b/gdb/arch/aarch64-gcs-linux.h
+index 65f70a72b15..761c498b76a 100644
+--- a/gdb/arch/aarch64-gcs-linux.h
++++ b/gdb/arch/aarch64-gcs-linux.h
+@@ -44,4 +44,8 @@ struct user_gcs
+ 
+ #endif /* GCS_MAGIC */
+ 
++#ifndef SEGV_CPERR
++#define SEGV_CPERR 10 /* Control protection error.  */
++#endif
++
+ #endif /* ARCH_AARCH64_GCS_LINUX_H */
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+index ea79174aef0..73db3c1a87c 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -32,7 +32,14 @@ if ![runto $linespec] {
+ 
+ # Continue until a crash.
+ gdb_test "continue" \
+-    {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
++    [multi_line \
++	 "Continuing\\." \
++	 "$hex" \
++	 "" \
++	 "Program received signal SIGSEGV, Segmentation fault" \
++	 "Guarded Control Stack error\\." \
++	 "function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal" \
++	 {.*__asm__ volatile\("ret\\n"\);}] \
+     "continue to SIGSEGV"
+ 
+ set gcspr_in_gcore [get_valueof "/x" "\$gcspr" "*unknown*"]
+@@ -53,13 +60,16 @@ set core_filename $native_core_name
+ # read both correctly.
+ 
+ proc check_core_file {core_filename saved_gcspr} {
++    global decimal hex
++
+     # Load the core file.
+     if [gdb_test "core $core_filename" \
+ 	    [multi_line \
+-		 "Core was generated by.*\." \
+-		 "Program terminated with signal SIGSEGV, Segmentation fault\." \
+-		 "#0  function \\(.*\\) at .*" \
+-		 "\[0-9\]+.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
++		 "Core was generated by .*\\." \
++		 "Program terminated with signal SIGSEGV, Segmentation fault" \
++		 "Guarded Control Stack error\\." \
++		 "#0  function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal" \
++		 "$decimal.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
+ 	    "load core file"] {
+ 	untested "failed to load core file"
+ 	return -1
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index f57f6c5043d..8d5f6e90c25 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -54,8 +54,14 @@ gdb_test "print \$gcspr == \$gcspr_in_handler + 8" ". = 1" \
+     "GCSPR unwound from signal context is correct"
+ 
+ gdb_test "continue" \
+-    {.*\r\nProgram received signal SIGSEGV, Segmentation fault\..*__asm__ volatile\("ret\\n"\);} \
++    [multi_line \
++	 "Continuing\\." \
++	 "" \
++	 "Program received signal SIGSEGV, Segmentation fault" \
++	 "Guarded Control Stack error\\." \
++	 {.*__asm__ volatile\("ret\\n"\);}] \
+     "continue to SIGSEGV"
++
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+     "Test value of si_code when GCS SIGSEGV happens"
+ # The GCS grows down.
+-- 
+2.25.1
+
+
+From 6ff5e6aa1064c8f8fd8fc08963efbe2a1a5e7a8e Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 28 Feb 2024 21:34:04 -0300
+Subject: [PATCH 17/27] Install gdbarch_report_signal_info hook when target
+ supports GCS
+
+Fixes GCS signal info not being printed after updating Shrinkwrap image.
+---
+ gdb/aarch64-linux-tdep.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/gdb/aarch64-linux-tdep.c b/gdb/aarch64-linux-tdep.c
+index 04bc46245f2..f9b743f4810 100644
+--- a/gdb/aarch64-linux-tdep.c
++++ b/gdb/aarch64-linux-tdep.c
+@@ -3003,9 +3003,6 @@ aarch64_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
+       /* Register a hook for converting a memory tag to a string.  */
+       set_gdbarch_memtag_to_string (gdbarch, aarch64_linux_memtag_to_string);
+ 
+-      set_gdbarch_report_signal_info (gdbarch,
+-				      aarch64_linux_report_signal_info);
+-
+       /* Core file helpers.  */
+ 
+       /* Core file helper to create a memory tag section for a particular
+@@ -3022,6 +3019,9 @@ aarch64_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
+ 					 aarch64_linux_decode_memtag_section);
+     }
+ 
++  if (tdep->has_mte () || tdep->has_gcs ())
++    set_gdbarch_report_signal_info (gdbarch, aarch64_linux_report_signal_info);
++
+   /* Initialize the aarch64_linux_record_tdep.  */
+   /* These values are the size of the type that will be used in a system
+      call.  They are obtained from Linux Kernel source.  */
+-- 
+2.25.1
+
+
+From 6501de854b2269802d043309a651b33b47bf45a9 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Sat, 17 Feb 2024 13:37:11 -0300
+Subject: [PATCH 18/27] Add "PC" flag to show in backtrace when the GCS has a
+ different return address
+
+The test needs to use "backtrace -frame-info location-and-address" because
+by default GDB doesn't call gdbarch_get_pc_address_flags () for some
+frames, depending on where the PC is at within the source line, and whether
+there is debug info for the function.
+
+Because of this, a better alternative is to add separate frame
+flags/decoration to show the GCS error message.
+---
+ gdb/aarch64-tdep.c                     | 58 +++++++++++++++++++++++++-
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   |  2 +-
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  6 +++
+ 3 files changed, 63 insertions(+), 3 deletions(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 0d32b948924..4fd545e7efa 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -301,15 +301,69 @@ aarch64_frame_unmask_lr (aarch64_gdbarch_tdep *tdep,
+   return addr;
+ }
+ 
++static std::optional<std::string>
++aarch64_get_gcs_flag (frame_info_ptr frame)
++{
++  int frame_level = frame_relative_level (frame);
++  if (frame_level < 0)
++    return {};
++
++  /* GCS is only available for real frames.  */
++  if (get_frame_id (frame).artificial_depth > 0)
++    return {};
++
++  /* The GCSPR isn't saved in the stack, so we get it from the live register
++     file.  */
++  /* FIXME: Is there a way to get the inferior corresponding to the given
++     frame?  */
++  struct regcache *regcache = get_thread_regcache (inferior_thread ());
++  aarch64_gdbarch_tdep *tdep
++      = gdbarch_tdep<aarch64_gdbarch_tdep> (regcache->arch ());
++  CORE_ADDR gcspr;
++
++  if (!tdep->has_gcs ())
++    return {};
++
++  if (regcache->cooked_read (tdep->gcs_reg_base, &gcspr) != REG_VALID)
++    return {};
++
++  gdb_byte buf[8];
++  /* Read the GCS return address entry corresponding to this stack frame.  */
++  if (target_read_memory (gcspr + 8 * frame_level, buf, sizeof (buf)) != 0)
++    return {};
++
++  bfd_endian byte_order = gdbarch_byte_order (regcache->arch ());
++  CORE_ADDR gcs_lr = extract_integer<CORE_ADDR> (buf, byte_order);
++
++  get_frame_register (frame, AARCH64_LR_REGNUM, buf);
++  CORE_ADDR lr = extract_integer<CORE_ADDR> (buf, byte_order);
++
++  if (gcs_lr == lr)
++    return {};
++  else
++    return "GCS error";
++}
++
+ /* Implement the "get_pc_address_flags" gdbarch method.  */
+ 
+ static std::string
+ aarch64_get_pc_address_flags (const frame_info_ptr &frame, CORE_ADDR pc)
+ {
++  std::string ret;
++
+   if (pc != 0 && get_frame_pc_masked (frame))
+-    return "PAC";
++    ret += "PAC";
++
++  std::optional<std::string> gcs_flag = aarch64_get_gcs_flag (frame);
++  if (gcs_flag.has_value ())
++    {
++      if (!ret.empty())
++	ret += " ";
+ 
+-  return "";
++      ret += *gcs_flag;
++    }
++
++  return ret;
+ }
+ 
+ /* Analyze a prologue, looking for a recognizable stack frame
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index c187528c448..9cba9fa63bc 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -76,7 +76,7 @@ static void __attribute__ ((noinline))
+ function (unsigned long *gcspr)
+ {
+   /* x30 holds the return address.  */
+-  register long x30 __asm__("x30") __attribute__ ((unused));
++  register unsigned long x30 __asm__("x30") __attribute__ ((unused));
+ 
+   /* Cause a GCS exception.  */
+   x30 = 0xbadc0ffee;
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index 8d5f6e90c25..fed1f28ad85 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -67,3 +67,9 @@ gdb_test "print \$_siginfo.si_code" ". = 10" \
+ # The GCS grows down.
+ gdb_test "print \$gcspr == \$gcspr_in_main - 8" ". = 1" \
+     "Test value of GCSPR when GCS SIGSEGV happens"
++
++gdb_test "backtrace -frame-info location-and-address" \
++    [multi_line \
++	 "#0  $hex \\\[GCS error\\\] in function \\(gcspr=$hex\\) at .*aarch64-gcs.c:$decimal" \
++	 "#1  $hex \\\[GCS error\\\] in main \\(\\) at .*aarch64-gcs.c:$decimal"] \
++    "GCS flag in backtrace"
+-- 
+2.25.1
+
+
+From a430660e6196af01a941ab682ecb9cf88906ced7 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 28 Feb 2024 21:15:11 -0300
+Subject: [PATCH 19/27] Add concept of frame flags, and convert GCS error to
+ use it
+
+This fixes two problems with the GCS error as a PC flag:
+
+1. It's not about the PC, but about the return value saved in the frame.
+
+2. By default, GDB doesn't always show the PC (and thus the PC flags) in
+backtraces.
+---
+ gdb/aarch64-tdep.c                          | 37 ++++++++++++---------
+ gdb/arch-utils.c                            |  8 +++++
+ gdb/arch-utils.h                            |  3 ++
+ gdb/gdbarch-gen.h                           |  6 ++++
+ gdb/gdbarch.c                               | 22 ++++++++++++
+ gdb/gdbarch_components.py                   | 11 ++++++
+ gdb/stack.c                                 |  8 +++++
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.exp |  4 +--
+ gdb/testsuite/gdb.arch/aarch64-gcs.c        | 31 ++++++++++++++---
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp      | 21 +++++++-----
+ 10 files changed, 120 insertions(+), 31 deletions(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 4fd545e7efa..85865a74e85 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -301,8 +301,8 @@ aarch64_frame_unmask_lr (aarch64_gdbarch_tdep *tdep,
+   return addr;
+ }
+ 
+-static std::optional<std::string>
+-aarch64_get_gcs_flag (frame_info_ptr frame)
++static std::string
++aarch64_get_frame_flags (frame_info_ptr frame)
+ {
+   int frame_level = frame_relative_level (frame);
+   if (frame_level < 0)
+@@ -327,9 +327,24 @@ aarch64_get_gcs_flag (frame_info_ptr frame)
+   if (regcache->cooked_read (tdep->gcs_reg_base, &gcspr) != REG_VALID)
+     return {};
+ 
++  int real_frame_level = frame_level;
++  if (frame_level != 0)
++    {
++      /* Find out how many real frames there are between frame 0 and the current
++	 one.  */
++      frame_info_ptr frame0 = frame;
++      while (frame_relative_level (frame0) > 0)
++	frame0 = get_next_frame (frame0);
++
++      for (frame_info_ptr f = frame0; frame_relative_level (f) < frame_level;
++	   f = get_prev_frame (f))
++	if (get_frame_id (f).artificial_depth > 0)
++	  real_frame_level--;
++    }
++
+   gdb_byte buf[8];
+   /* Read the GCS return address entry corresponding to this stack frame.  */
+-  if (target_read_memory (gcspr + 8 * frame_level, buf, sizeof (buf)) != 0)
++  if (target_read_memory (gcspr + 8 * real_frame_level, buf, sizeof (buf)) != 0)
+     return {};
+ 
+   bfd_endian byte_order = gdbarch_byte_order (regcache->arch ());
+@@ -349,21 +364,10 @@ aarch64_get_gcs_flag (frame_info_ptr frame)
+ static std::string
+ aarch64_get_pc_address_flags (const frame_info_ptr &frame, CORE_ADDR pc)
+ {
+-  std::string ret;
+-
+   if (pc != 0 && get_frame_pc_masked (frame))
+-    ret += "PAC";
++    return "PAC";
+ 
+-  std::optional<std::string> gcs_flag = aarch64_get_gcs_flag (frame);
+-  if (gcs_flag.has_value ())
+-    {
+-      if (!ret.empty())
+-	ret += " ";
+-
+-      ret += *gcs_flag;
+-    }
+-
+-  return ret;
++  return "";
+ }
+ 
+ /* Analyze a prologue, looking for a recognizable stack frame
+@@ -4647,6 +4651,7 @@ aarch64_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
+   set_gdbarch_gen_return_address (gdbarch, aarch64_gen_return_address);
+ 
+   set_gdbarch_get_pc_address_flags (gdbarch, aarch64_get_pc_address_flags);
++  set_gdbarch_get_frame_flags (gdbarch, aarch64_get_frame_flags);
+ 
+   tdesc_use_registers (gdbarch, tdesc, std::move (tdesc_data));
+ 
+diff --git a/gdb/arch-utils.c b/gdb/arch-utils.c
+index 83e29470bf7..058ab52b069 100644
+--- a/gdb/arch-utils.c
++++ b/gdb/arch-utils.c
+@@ -1084,6 +1084,14 @@ default_get_pc_address_flags (const frame_info_ptr &frame, CORE_ADDR pc)
+   return "";
+ }
+ 
++/* See arch-utils.h.  */
++
++std::string
++default_get_frame_flags (frame_info_ptr frame)
++{
++  return {};
++}
++
+ /* See arch-utils.h.  */
+ void
+ default_read_core_file_mappings
+diff --git a/gdb/arch-utils.h b/gdb/arch-utils.h
+index 40c62f30a65..2b51ad3fadf 100644
+--- a/gdb/arch-utils.h
++++ b/gdb/arch-utils.h
+@@ -298,6 +298,9 @@ extern ULONGEST default_type_align (struct gdbarch *gdbarch,
+ extern std::string default_get_pc_address_flags (const frame_info_ptr &frame,
+ 						 CORE_ADDR pc);
+ 
++/* Default implementation of gdbarch get_frame_flags method.  */
++extern std::string default_get_frame_flags (frame_info_ptr frame);
++
+ /* Default implementation of gdbarch read_core_file_mappings method.  */
+ extern void default_read_core_file_mappings
+   (struct gdbarch *gdbarch,
+diff --git a/gdb/gdbarch-gen.h b/gdb/gdbarch-gen.h
+index b982fd7cd09..ba16d4c5f65 100644
+--- a/gdb/gdbarch-gen.h
++++ b/gdb/gdbarch-gen.h
+@@ -1736,6 +1736,12 @@ typedef std::string (gdbarch_get_pc_address_flags_ftype) (const frame_info_ptr &
+ extern std::string gdbarch_get_pc_address_flags (struct gdbarch *gdbarch, const frame_info_ptr &frame, CORE_ADDR pc);
+ extern void set_gdbarch_get_pc_address_flags (struct gdbarch *gdbarch, gdbarch_get_pc_address_flags_ftype *get_pc_address_flags);
+ 
++/* Return a string containing any flags for the given  FRAME. */
++
++typedef std::string (gdbarch_get_frame_flags_ftype) (frame_info_ptr frame);
++extern std::string gdbarch_get_frame_flags (struct gdbarch *gdbarch, frame_info_ptr frame);
++extern void set_gdbarch_get_frame_flags (struct gdbarch *gdbarch, gdbarch_get_frame_flags_ftype *get_frame_flags);
++
+ /* Read core file mappings */
+ 
+ typedef void (gdbarch_read_core_file_mappings_ftype) (struct gdbarch *gdbarch, struct bfd *cbfd, read_core_file_mappings_pre_loop_ftype pre_loop_cb, read_core_file_mappings_loop_ftype loop_cb);
+diff --git a/gdb/gdbarch.c b/gdb/gdbarch.c
+index 58e9ebbdc59..4975ee9f028 100644
+--- a/gdb/gdbarch.c
++++ b/gdb/gdbarch.c
+@@ -256,6 +256,7 @@ struct gdbarch
+   const disasm_options_and_args_t * valid_disassembler_options = 0;
+   gdbarch_type_align_ftype *type_align = default_type_align;
+   gdbarch_get_pc_address_flags_ftype *get_pc_address_flags = default_get_pc_address_flags;
++  gdbarch_get_frame_flags_ftype *get_frame_flags = default_get_frame_flags;
+   gdbarch_read_core_file_mappings_ftype *read_core_file_mappings = default_read_core_file_mappings;
+   gdbarch_use_target_description_from_corefile_notes_ftype *use_target_description_from_corefile_notes = default_use_target_description_from_corefile_notes;
+ };
+@@ -525,6 +526,7 @@ verify_gdbarch (struct gdbarch *gdbarch)
+   /* Skip verify of valid_disassembler_options, invalid_p == 0 */
+   /* Skip verify of type_align, invalid_p == 0 */
+   /* Skip verify of get_pc_address_flags, invalid_p == 0 */
++  /* Skip verify of get_frame_flags, invalid_p == 0 */
+   /* Skip verify of read_core_file_mappings, invalid_p == 0 */
+   /* Skip verify of use_target_description_from_corefile_notes, invalid_p == 0 */
+   if (!log.empty ())
+@@ -1380,6 +1382,9 @@ gdbarch_dump (struct gdbarch *gdbarch, struct ui_file *file)
+   gdb_printf (file,
+ 	      "gdbarch_dump: get_pc_address_flags = <%s>\n",
+ 	      host_address_to_string (gdbarch->get_pc_address_flags));
++  gdb_printf (file,
++	      "gdbarch_dump: get_frame_flags = <%s>\n",
++	      host_address_to_string (gdbarch->get_frame_flags));
+   gdb_printf (file,
+ 	      "gdbarch_dump: read_core_file_mappings = <%s>\n",
+ 	      host_address_to_string (gdbarch->read_core_file_mappings));
+@@ -5430,6 +5435,23 @@ set_gdbarch_get_pc_address_flags (struct gdbarch *gdbarch,
+   gdbarch->get_pc_address_flags = get_pc_address_flags;
+ }
+ 
++std::string
++gdbarch_get_frame_flags (struct gdbarch *gdbarch, frame_info_ptr frame)
++{
++  gdb_assert (gdbarch != NULL);
++  gdb_assert (gdbarch->get_frame_flags != NULL);
++  if (gdbarch_debug >= 2)
++    gdb_printf (gdb_stdlog, "gdbarch_get_frame_flags called\n");
++  return gdbarch->get_frame_flags (frame);
++}
++
++void
++set_gdbarch_get_frame_flags (struct gdbarch *gdbarch,
++			     gdbarch_get_frame_flags_ftype get_frame_flags)
++{
++  gdbarch->get_frame_flags = get_frame_flags;
++}
++
+ void
+ gdbarch_read_core_file_mappings (struct gdbarch *gdbarch, struct bfd *cbfd, read_core_file_mappings_pre_loop_ftype pre_loop_cb, read_core_file_mappings_loop_ftype loop_cb)
+ {
+diff --git a/gdb/gdbarch_components.py b/gdb/gdbarch_components.py
+index 4006380076d..9159de07b1c 100644
+--- a/gdb/gdbarch_components.py
++++ b/gdb/gdbarch_components.py
+@@ -2749,6 +2749,17 @@ Return a string containing any flags for the given PC in the given FRAME.
+     invalid=False,
+ )
+ 
++Function(
++    comment="""
++Return a string containing any flags for the given  FRAME.
++""",
++    type="std::string",
++    name="get_frame_flags",
++    params=[("frame_info_ptr", "frame")],
++    predefault="default_get_frame_flags",
++    invalid=False,
++)
++
+ Method(
+     comment="""
+ Read core file mappings
+diff --git a/gdb/stack.c b/gdb/stack.c
+index b36193be2f3..b1e96c996fe 100644
+--- a/gdb/stack.c
++++ b/gdb/stack.c
+@@ -1441,6 +1441,14 @@ print_frame (struct ui_out *uiout,
+     if (uiout->is_mi_like_p ())
+       uiout->field_string ("arch",
+ 			   (gdbarch_bfd_arch_info (gdbarch))->printable_name);
++
++    std::string flags = gdbarch_get_frame_flags (gdbarch, frame);
++    if (!flags.empty ())
++      {
++	uiout->text (" [");
++	uiout->field_string ("frame_flags", flags);
++	uiout->text ("]");
++      }
+   }
+ 
+   uiout->text ("\n");
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+index 73db3c1a87c..71b8d8b681b 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.exp
+@@ -38,7 +38,7 @@ gdb_test "continue" \
+ 	 "" \
+ 	 "Program received signal SIGSEGV, Segmentation fault" \
+ 	 "Guarded Control Stack error\\." \
+-	 "function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal" \
++	 "function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal \\\[GCS error\\\]" \
+ 	 {.*__asm__ volatile\("ret\\n"\);}] \
+     "continue to SIGSEGV"
+ 
+@@ -68,7 +68,7 @@ proc check_core_file {core_filename saved_gcspr} {
+ 		 "Core was generated by .*\\." \
+ 		 "Program terminated with signal SIGSEGV, Segmentation fault" \
+ 		 "Guarded Control Stack error\\." \
+-		 "#0  function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal" \
++		 "#0  function \\(gcspr=$hex\\) at .*aarch64-gcs-core.c:$decimal \\\[GCS error\\\]" \
+ 		 "$decimal.*__asm__ volatile\\(\"ret\\\\n\"\\);"] \
+ 	    "load core file"] {
+ 	untested "failed to load core file"
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index 9cba9fa63bc..f9e40fe18e5 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -73,7 +73,7 @@ handler (int sig)
+ /* Corrupt the return address to see if GDB will report a SIGSEGV with the expected
+    $_siginfo.si_code.  */
+ static void __attribute__ ((noinline))
+-function (unsigned long *gcspr)
++normal_function2 (void)
+ {
+   /* x30 holds the return address.  */
+   register unsigned long x30 __asm__("x30") __attribute__ ((unused));
+@@ -83,6 +83,29 @@ function (unsigned long *gcspr)
+   __asm__ volatile("ret\n");
+ }
+ 
++static inline void __attribute__ ((__always_inline__))
++inline_function2 (void)
++{
++  normal_function2 ();
++}
++
++/* Corrupt the return address to see if GDB will report a GCS error in this
++   function's frame .  */
++static void __attribute__ ((noinline))
++normal_function1 (void)
++{
++  /* x30 holds the return address.  */
++  register unsigned long x30 __asm__ ("x30") __attribute__ ((unused));
++  x30 = 0xbadc0ffee;
++  inline_function2 ();
++}
++
++static inline void __attribute__ ((__always_inline__))
++inline_function1 (void)
++{
++  normal_function1 ();
++}
++
+ int
+ main (void)
+ {
+@@ -114,7 +137,8 @@ main (void)
+ 	}
+     }
+ 
+-  unsigned long *gcspr = get_gcspr ();
++  /* This is used by GDB.  */
++  __attribute__((unused)) unsigned long *gcspr = get_gcspr ();
+ 
+   struct sigaction act = { 0 };
+ 
+@@ -127,8 +151,7 @@ main (void)
+ 
+   raise (SIGUSR1);
+ 
+-  /* Pass gscpr to function just so it's used for something.  */
+-  function (gcspr);
++  inline_function1 ();
+ 
+   /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (EXIT_SUCCESS);
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index fed1f28ad85..d2b1185f73c 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -46,8 +46,7 @@ gdb_test_no_output "set \$gcspr_in_handler = \$gcspr" \
+     "Save GCSPR value in handler for later"
+ # Select the frame above the <signal handler called> frame, which makes GDB
+ # unwind the GCSPR from the signal frame GCS context.
+-gdb_test "frame 2" \
+-    "#2  ($hex in )?\\S+ \\(.*\\) (at|from) \\S+(\r\n(warning:.*: No such file or directory|\[0-9\]+\\s+in \\S+))?" \
++gdb_test "frame 2" "#2  ($hex in )?\\S+ \\(.*\\) (at|from) \\S+.*" \
+     "Reached frame 2"
+ gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GCSPR in frame level 2"
+ gdb_test "print \$gcspr == \$gcspr_in_handler + 8" ". = 1" \
+@@ -59,17 +58,21 @@ gdb_test "continue" \
+ 	 "" \
+ 	 "Program received signal SIGSEGV, Segmentation fault" \
+ 	 "Guarded Control Stack error\\." \
+-	 {.*__asm__ volatile\("ret\\n"\);}] \
++	 "normal_function2 \\(\\) at .*aarch64-gcs.c:$decimal \\\[GCS error\\\]" \
++	 "${decimal}\\s+__asm__ volatile\\(\"ret\\\\n\"\\);"] \
+     "continue to SIGSEGV"
+ 
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+     "Test value of si_code when GCS SIGSEGV happens"
+-# The GCS grows down.
+-gdb_test "print \$gcspr == \$gcspr_in_main - 8" ". = 1" \
++# The GCS grows down, and there are two real frames until main.
++gdb_test "print \$gcspr == \$gcspr_in_main - 16" ". = 1" \
+     "Test value of GCSPR when GCS SIGSEGV happens"
+ 
+-gdb_test "backtrace -frame-info location-and-address" \
++gdb_test "backtrace" \
+     [multi_line \
+-	 "#0  $hex \\\[GCS error\\\] in function \\(gcspr=$hex\\) at .*aarch64-gcs.c:$decimal" \
+-	 "#1  $hex \\\[GCS error\\\] in main \\(\\) at .*aarch64-gcs.c:$decimal"] \
+-    "GCS flag in backtrace"
++	 "#0  normal_function2 \\(\\) at .*aarch64-gcs.c:$decimal \\\[GCS error\\\]" \
++	 "#1  $hex in inline_function2 \\(\\) at .*aarch64-gcs.c:${decimal}" \
++	 "#2  normal_function1 \\(\\) at .*aarch64-gcs.c:$decimal \\\[GCS error\\\]" \
++	 "#3  $hex in inline_function1 \\(\\) at .*aarch64-gcs.c:${decimal}" \
++	 "#4  main \\(\\) at .*aarch64-gcs.c:${decimal}(?: \\\[GCS error\\\])?"] \
++    "GCS flags in backtrace"
+-- 
+2.25.1
+
+
+From 8953a001cf3ffcafa98ed9c3eda252dd86185623 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Fri, 8 Mar 2024 12:37:37 -0300
+Subject: [PATCH 20/27] Only install gdbarch_get_frame_flags hook if target
+ supports GCS.
+
+---
+ gdb/aarch64-tdep.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 85865a74e85..320388b78f8 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -4651,7 +4651,8 @@ aarch64_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
+   set_gdbarch_gen_return_address (gdbarch, aarch64_gen_return_address);
+ 
+   set_gdbarch_get_pc_address_flags (gdbarch, aarch64_get_pc_address_flags);
+-  set_gdbarch_get_frame_flags (gdbarch, aarch64_get_frame_flags);
++  if (tdep->has_gcs ())
++    set_gdbarch_get_frame_flags (gdbarch, aarch64_get_frame_flags);
+ 
+   tdesc_use_registers (gdbarch, tdesc, std::move (tdesc_data));
+ 
+-- 
+2.25.1
+
+
+From c3c70732d717ae01ea09b3cc4b86c16282fc9f77 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 6 Mar 2024 23:44:19 -0300
+Subject: [PATCH 21/27] Add testcase exercising GCS with displaced stepping
+
+It puts the breakpoint on the bl instruction to force GDB to copy
+it to the displaced stepping buffer.
+---
+ .../gdb.arch/aarch64-gcs-disp-step.c          | 108 ++++++++++++++++++
+ .../gdb.arch/aarch64-gcs-disp-step.exp        |  62 ++++++++++
+ 2 files changed, 170 insertions(+)
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+ create mode 100644 gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+new file mode 100644
+index 00000000000..7f0e8888cae
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+@@ -0,0 +1,108 @@
++/* This test program is part of GDB, the GNU debugger.
++
++   Copyright 2024 Free Software Foundation, Inc.
++
++   This program is free software; you can redistribute it and/or modify
++   it under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3 of the License, or
++   (at your option) any later version.
++
++   This program is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++   GNU General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/auxv.h>
++#include <sys/syscall.h>
++#include <linux/prctl.h>
++
++/* Feature check for Guarded Control Stack.  */
++#ifndef HWCAP2_GCS
++#define HWCAP2_GCS (1UL << 48)
++#endif
++
++#ifndef PR_GET_SHADOW_STACK_STATUS
++#define PR_GET_SHADOW_STACK_STATUS 71
++#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_SHADOW_STACK_ENABLE (1UL << 0)
++#endif
++
++/* We need to use a macro to call prctl because after GCS is enabled, it's not
++   possible to return from the function which enabled it.  This is because the
++   return address of the calling function isn't on the GCS.  */
++#define my_syscall2(num, arg1, arg2)					\
++  ({									\
++    register long _num __asm__("x8") = (num);				\
++    register long _arg1 __asm__("x0") = (long)(arg1);			\
++    register long _arg2 __asm__("x1") = (long)(arg2);			\
++    register long _arg3 __asm__("x2") = 0;				\
++    register long _arg4 __asm__("x3") = 0;				\
++    register long _arg5 __asm__("x4") = 0;				\
++									\
++    __asm__ volatile("svc #0\n"						\
++		     : "=r"(_arg1)					\
++		     : "r"(_arg1), "r"(_arg2), "r"(_arg3), "r"(_arg4),	\
++		       "r"(_arg5), "r"(_num)				\
++		     : "memory", "cc");					\
++    _arg1;								\
++  })
++
++#define get_gcspr(void)							\
++  ({									\
++    unsigned long *gcspr;						\
++									\
++    asm volatile("mrs	%0, S3_3_C2_C5_1" : "=r"(gcspr) : : "cc");	\
++									\
++    gcspr;								\
++  })
++
++static int __attribute__ ((noinline))
++function (void)
++{
++  return EXIT_SUCCESS;
++}
++
++int
++main (void)
++{
++  if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
++    return EXIT_FAILURE;
++
++  /* Force shadow stacks on, our tests *should* be fine with or
++     without libc support and with or without this having ended
++     up tagged for GCS and enabled by the dynamic linker.  We
++     can't use the libc prctl() function since we can't return
++     from enabling the stack.  Also lock GCS if not already
++     locked so we can test behaviour when it's locked.  */
++  unsigned long gcs_mode;
++  int ret = my_syscall2 (__NR_prctl, PR_GET_SHADOW_STACK_STATUS, &gcs_mode);
++  if (ret)
++    {
++      fprintf (stderr, "Failed to read GCS state: %d\n", ret);
++      return EXIT_FAILURE;
++    }
++
++  if (!(gcs_mode & PR_SHADOW_STACK_ENABLE))
++    {
++      gcs_mode = PR_SHADOW_STACK_ENABLE;
++      ret = my_syscall2 (__NR_prctl, PR_SET_SHADOW_STACK_STATUS, gcs_mode);
++      if (ret)
++	{
++	  fprintf (stderr, "Failed to configure GCS: %d\n", ret);
++	  return EXIT_FAILURE;
++	}
++    }
++
++  /* This is used by GDB.  */
++  __attribute__((unused)) unsigned long *gcspr = get_gcspr ();
++
++  ret = function ();
++
++  /* Avoid returning, in case libc doesn't understand GCS.  */
++  exit (ret);
++}
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+new file mode 100644
+index 00000000000..51ca1eeef38
+--- /dev/null
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+@@ -0,0 +1,62 @@
++# Copyright 2024 Free Software Foundation, Inc.
++
++# This program is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++
++# Test a binary that uses a Guarded Control Stack.
++
++require allow_aarch64_gcs_tests
++
++standard_testfile
++
++if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
++    return -1
++}
++
++if ![runto_main] {
++    return
++}
++
++gdb_test_no_output "set breakpoint auto-hw off"
++gdb_test_no_output "set displaced-stepping on"
++
++# Get the address of function's return instruction.
++set addr_bl 0
++set test "Get address of bl instruction"
++gdb_test_multiple "disassemble main" $test -lbl {
++    -re "\r\n\\s+($hex) <\\+${decimal}>:\\s+bl\\s+${hex} <function>(?=\r\n)" {
++	set addr_bl $expect_out(1,string)
++	exp_continue
++    }
++    -re "$::gdb_prompt \$" {
++	gdb_assert { $addr_bl != 0 } $test
++    }
++}
++
++gdb_test "break *$addr_bl" \
++    "Breakpoint $decimal at $hex: file .*aarch64-gcs-disp-step.c, line ${decimal}." \
++    "Set breakpoint at bl instruction"
++
++gdb_test "continue" \
++    [multi_line \
++	 "Continuing\\." \
++	 "" \
++	 "Breakpoint $decimal, main \\(\\) at .*aarch64-gcs-disp-step.c:${decimal}(?: \\\[GCS error\\\])?" \
++	 "${decimal}\\s+ret = function \\(\\);"] \
++    "continue to breakpoint"
++
++gdb_test "continue" \
++    [multi_line \
++	 "Continuing\\." \
++	 "\\\[Inferior 1 \\(process $decimal\\) exited normally\\\]"] \
++    "Continue past breakpoint"
+-- 
+2.25.1
+
+
+From aa6e271fcb021d6054c1f271674ea8bf367c6c74 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Fri, 8 Mar 2024 20:13:53 -0300
+Subject: [PATCH 22/27] Implement GCS support in displaced stepping for bl
+ instruction
+
+The following branch with link instructions still need to be supported:
+
+- BLR
+- BLRAA
+- BLRAAZ
+- BLRAB
+- BLRABZ
+---
+ gdb/aarch64-tdep.c | 63 ++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 58 insertions(+), 5 deletions(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 320388b78f8..765c6072836 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -3620,6 +3620,9 @@ struct aarch64_displaced_step_copy_insn_closure
+   /* PC adjustment offset after displaced stepping.  If 0, then we don't
+      write the PC back, assuming the PC is already the right address.  */
+   int32_t pc_adjust = 0;
++
++  /* True if it's a branch instruction that saves the link register.  */
++  bool linked_branch = false;
+ };
+ 
+ /* Data when visiting instructions for displaced stepping.  */
+@@ -3640,6 +3643,47 @@ struct aarch64_displaced_step_data
+   aarch64_displaced_step_copy_insn_closure *dsc;
+ };
+ 
++/* If push is true, push lr_value to the Guarded Control Stack.
++   Otherwise, remove newest entry from the Guarded Control Stack.  */
++
++static void
++aarch64_push_gcs_entry (regcache *regs, CORE_ADDR lr_value)
++{
++  gdbarch *arch = regs->arch ();
++  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
++  CORE_ADDR gcs_addr;
++
++  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
++						   &gcs_addr);
++  if (status != REG_VALID)
++    error ("Can't read $gcspr.");
++
++  gcs_addr -= 8;
++  gdb_byte buf[8];
++  store_integer (buf, gdbarch_byte_order (arch), lr_value);
++  if (target_write_memory (gcs_addr, buf, sizeof (buf)) != 0)
++    error ("Can't write to Guarded Control Stack.");
++
++  /* Update GCSPR.  */
++  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr);
++}
++
++static void
++aarch64_pop_gcs_entry (regcache *regs)
++{
++  gdbarch *arch = regs->arch ();
++  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
++  CORE_ADDR gcs_addr;
++
++  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
++						   &gcs_addr);
++  if (status != REG_VALID)
++    error ("Can't read $gcspr.");
++
++  /* Update GCSPR.  */
++  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr + 8);
++}
++
+ /* Implementation of aarch64_insn_visitor method "b".  */
+ 
+ static void
+@@ -3671,6 +3715,11 @@ aarch64_displaced_step_b (const int is_bl, const int32_t offset,
+       /* Update LR.  */
+       regcache_cooked_write_unsigned (dsd->regs, AARCH64_LR_REGNUM,
+ 				      data->insn_addr + 4);
++      dsd->dsc->linked_branch = true;
++      aarch64_gdbarch_tdep *tdep
++	= gdbarch_tdep<aarch64_gdbarch_tdep> (dsd->regs->arch ());
++      if (tdep->has_gcs ())
++	aarch64_push_gcs_entry (dsd->regs, data->insn_addr + 4);
+     }
+ }
+ 
+@@ -3925,20 +3974,24 @@ aarch64_displaced_step_fixup (struct gdbarch *gdbarch,
+ 			      CORE_ADDR from, CORE_ADDR to,
+ 			      struct regcache *regs, bool completed_p)
+ {
++  aarch64_displaced_step_copy_insn_closure *dsc
++    = (aarch64_displaced_step_copy_insn_closure *) dsc_;
+   CORE_ADDR pc = regcache_read_pc (regs);
+ 
+-  /* If the displaced instruction didn't complete successfully then all we
+-     need to do is restore the program counter.  */
++  /* If the displaced instruction didn't complete successfully then we need
++     to restore the program counter, and perhaps the Guarded Control Stack.  */
+   if (!completed_p)
+     {
++      aarch64_gdbarch_tdep *tdep
++	  = gdbarch_tdep<aarch64_gdbarch_tdep> (gdbarch);
++      if (dsc->linked_branch && tdep->has_gcs ())
++	aarch64_pop_gcs_entry (regs);
++
+       pc = from + (pc - to);
+       regcache_write_pc (regs, pc);
+       return;
+     }
+ 
+-  aarch64_displaced_step_copy_insn_closure *dsc
+-    = (aarch64_displaced_step_copy_insn_closure *) dsc_;
+-
+   displaced_debug_printf ("PC after stepping: %s (was %s).",
+ 			  paddress (gdbarch, pc), paddress (gdbarch, to));
+ 
+-- 
+2.25.1
+
+
+From 9ed7cf0cfdeaaf02843decdc6f0b7b2b231acc6f Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 13 Mar 2024 00:02:05 -0300
+Subject: [PATCH 23/27] Implement GCS support in displaced stepping for blr
+ instruction
+
+The following branch with link instructions with pointer authentication
+still need to be supported:
+
+- BLRAA
+- BLRAAZ
+- BLRAB
+- BLRABZ
+
+They are left for later because GDB doesn't have support for displaced
+stepping with those instructions, so that would have to be done first.
+---
+ gdb/aarch64-tdep.c                            |  5 ++++
+ .../gdb.arch/aarch64-gcs-disp-step.c          |  6 +++++
+ .../gdb.arch/aarch64-gcs-disp-step.exp        | 27 +++++++++++++++----
+ 3 files changed, 33 insertions(+), 5 deletions(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 765c6072836..11371f98ad2 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -3878,6 +3878,11 @@ aarch64_displaced_step_others (const uint32_t insn,
+       aarch64_emit_insn (dsd->insn_buf, insn & 0xffdfffff);
+       regcache_cooked_write_unsigned (dsd->regs, AARCH64_LR_REGNUM,
+ 				      data->insn_addr + 4);
++      dsd->dsc->linked_branch = true;
++      aarch64_gdbarch_tdep *tdep
++	= gdbarch_tdep<aarch64_gdbarch_tdep> (dsd->regs->arch ());
++      if (tdep->has_gcs ())
++	aarch64_push_gcs_entry (dsd->regs, data->insn_addr + 4);
+     }
+   else
+     aarch64_emit_insn (dsd->insn_buf, insn);
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+index 7f0e8888cae..6abcf05070b 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+@@ -103,6 +103,12 @@ main (void)
+ 
+   ret = function ();
+ 
++  register long x0 __asm__("x0");
++  __asm__ ("blr %1"
++	   : "=r"(x0)
++	   : "r"(&function)
++	   : "x30");
++
+   /* Avoid returning, in case libc doesn't understand GCS.  */
+   exit (ret);
+ }
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+index 51ca1eeef38..a8a8d8a15e9 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+@@ -30,16 +30,21 @@ if ![runto_main] {
+ gdb_test_no_output "set breakpoint auto-hw off"
+ gdb_test_no_output "set displaced-stepping on"
+ 
+-# Get the address of function's return instruction.
++# Get the address of branch and link instructions of interest in main.
+ set addr_bl 0
+-set test "Get address of bl instruction"
++set addr_blr 0
++set test "Get address of branch and link instructions"
+ gdb_test_multiple "disassemble main" $test -lbl {
+     -re "\r\n\\s+($hex) <\\+${decimal}>:\\s+bl\\s+${hex} <function>(?=\r\n)" {
+ 	set addr_bl $expect_out(1,string)
+ 	exp_continue
+     }
++    -re "\r\n\\s+($hex) <\\+${decimal}>:\\s+blr\\s+x${decimal}(?=\r\n)" {
++	set addr_blr $expect_out(1,string)
++	exp_continue
++    }
+     -re "$::gdb_prompt \$" {
+-	gdb_assert { $addr_bl != 0 } $test
++	gdb_assert { $addr_bl != 0 && $addr_blr != 0 } $test
+     }
+ }
+ 
+@@ -47,16 +52,28 @@ gdb_test "break *$addr_bl" \
+     "Breakpoint $decimal at $hex: file .*aarch64-gcs-disp-step.c, line ${decimal}." \
+     "Set breakpoint at bl instruction"
+ 
++gdb_test "break *$addr_blr" \
++    "Breakpoint $decimal at $hex: file .*aarch64-gcs-disp-step.c, line ${decimal}." \
++    "Set breakpoint at blr instruction"
++
+ gdb_test "continue" \
+     [multi_line \
+ 	 "Continuing\\." \
+ 	 "" \
+ 	 "Breakpoint $decimal, main \\(\\) at .*aarch64-gcs-disp-step.c:${decimal}(?: \\\[GCS error\\\])?" \
+ 	 "${decimal}\\s+ret = function \\(\\);"] \
+-    "continue to breakpoint"
++    "continue to breakpoint at bl"
++
++gdb_test "continue" \
++    [multi_line \
++	 "Continuing\\." \
++	 "" \
++	 "Breakpoint $decimal, $hex in main \\(\\) at .*aarch64-gcs-disp-step.c:${decimal}(?: \\\[GCS error\\\])?" \
++	 "${decimal}\\s+__asm__ \\(\"blr %1\""] \
++    "continue to breakpoint at blr"
+ 
+ gdb_test "continue" \
+     [multi_line \
+ 	 "Continuing\\." \
+ 	 "\\\[Inferior 1 \\(process $decimal\\) exited normally\\\]"] \
+-    "Continue past breakpoint"
++    "Continue until inferior exits"
+-- 
+2.25.1
+
+
+From e443f8c2a14a712209e6f56dcfdd274d2699173c Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 13 Mar 2024 14:47:44 -0300
+Subject: [PATCH 24/27] Adjust case of test names to convention
+
+The GDB Testcase Cookbook says that "Test names should start with a
+lower case", so adjust accordingly.
+
+Also take the opportunity to use lowercase for gcspr.
+---
+ .../gdb.arch/aarch64-gcs-disp-step.exp        |  8 +++----
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp        | 22 +++++++++----------
+ 2 files changed, 15 insertions(+), 15 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+index a8a8d8a15e9..117fed52ef3 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.exp
+@@ -33,7 +33,7 @@ gdb_test_no_output "set displaced-stepping on"
+ # Get the address of branch and link instructions of interest in main.
+ set addr_bl 0
+ set addr_blr 0
+-set test "Get address of branch and link instructions"
++set test "get address of branch and link instructions"
+ gdb_test_multiple "disassemble main" $test -lbl {
+     -re "\r\n\\s+($hex) <\\+${decimal}>:\\s+bl\\s+${hex} <function>(?=\r\n)" {
+ 	set addr_bl $expect_out(1,string)
+@@ -50,11 +50,11 @@ gdb_test_multiple "disassemble main" $test -lbl {
+ 
+ gdb_test "break *$addr_bl" \
+     "Breakpoint $decimal at $hex: file .*aarch64-gcs-disp-step.c, line ${decimal}." \
+-    "Set breakpoint at bl instruction"
++    "set breakpoint at bl instruction"
+ 
+ gdb_test "break *$addr_blr" \
+     "Breakpoint $decimal at $hex: file .*aarch64-gcs-disp-step.c, line ${decimal}." \
+-    "Set breakpoint at blr instruction"
++    "set breakpoint at blr instruction"
+ 
+ gdb_test "continue" \
+     [multi_line \
+@@ -76,4 +76,4 @@ gdb_test "continue" \
+     [multi_line \
+ 	 "Continuing\\." \
+ 	 "\\\[Inferior 1 \\(process $decimal\\) exited normally\\\]"] \
+-    "Continue until inferior exits"
++    "continue until inferior exits"
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index d2b1185f73c..7bf7b6f0c98 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -29,28 +29,28 @@ if ![runto ${linespec}] {
+     return
+ }
+ 
+-gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about GCSPR"
+-gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct GCSPR value"
++gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GDB knows about gcspr"
++gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct gcspr value"
+ gdb_test_no_output "set \$gcspr_in_main = \$gcspr" \
+-    "Save GCSPR value in main for later"
++    "save gcspr value in main for later"
+ 
+ gdb_test "break handler" "Breakpoint \[0-9\]+ .*aarch64-gcs.c, line \[0-9\]+\\."
+ gdb_test "handle SIGUSR1 nostop" \
+     ".*\r\nSIGUSR1\\s+No\\s+Yes\\s+Yes\\s+User defined signal 1" \
+-    "Let the inferior receive SIGUSR1 uninterrupted"
++    "let the inferior receive SIGUSR1 uninterrupted"
+ gdb_test "continue" \
+     ".*\r\nBreakpoint \[0-9\]+, handler \\(sig=10\\) at .*aarch64-gcs.c.*handler_gcspr = get_gcspr \\(\\);" \
+     "continue to signal handler"
+ 
+ gdb_test_no_output "set \$gcspr_in_handler = \$gcspr" \
+-    "Save GCSPR value in handler for later"
++    "save gcspr value in handler for later"
+ # Select the frame above the <signal handler called> frame, which makes GDB
+-# unwind the GCSPR from the signal frame GCS context.
++# unwind the gcspr from the signal frame GCS context.
+ gdb_test "frame 2" "#2  ($hex in )?\\S+ \\(.*\\) (at|from) \\S+.*" \
+-    "Reached frame 2"
+-gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "GCSPR in frame level 2"
++    "reached frame 2"
++gdb_test "print \$gcspr" ". = \\(void \\*\\) $hex" "gcspr in frame level 2"
+ gdb_test "print \$gcspr == \$gcspr_in_handler + 8" ". = 1" \
+-    "GCSPR unwound from signal context is correct"
++    "gcspr unwound from signal context is correct"
+ 
+ gdb_test "continue" \
+     [multi_line \
+@@ -63,10 +63,10 @@ gdb_test "continue" \
+     "continue to SIGSEGV"
+ 
+ gdb_test "print \$_siginfo.si_code" ". = 10" \
+-    "Test value of si_code when GCS SIGSEGV happens"
++    "test value of si_code when GCS SIGSEGV happens"
+ # The GCS grows down, and there are two real frames until main.
+ gdb_test "print \$gcspr == \$gcspr_in_main - 16" ". = 1" \
+-    "Test value of GCSPR when GCS SIGSEGV happens"
++    "test value of gcspr when GCS SIGSEGV happens"
+ 
+ gdb_test "backtrace" \
+     [multi_line \
+-- 
+2.25.1
+
+
+From 04820067592392fc316d38841629289b509e8475 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Wed, 13 Mar 2024 23:45:23 -0300
+Subject: [PATCH 25/27] Move aarch64_push_entry and aarch64_pop_entry up in the
+ file
+
+The former will be used in aarch64_push_dummy_call, so moving up avoids
+the need to add a function prototype.
+
+There's no code change.
+---
+ gdb/aarch64-tdep.c                     | 82 +++++++++++++-------------
+ gdb/testsuite/gdb.arch/aarch64-gcs.c   |  6 ++
+ gdb/testsuite/gdb.arch/aarch64-gcs.exp |  5 ++
+ 3 files changed, 52 insertions(+), 41 deletions(-)
+
+diff --git a/gdb/aarch64-tdep.c b/gdb/aarch64-tdep.c
+index 11371f98ad2..02ce2eb5189 100644
+--- a/gdb/aarch64-tdep.c
++++ b/gdb/aarch64-tdep.c
+@@ -1939,6 +1939,47 @@ pass_in_v_vfp_candidate (struct gdbarch *gdbarch, struct regcache *regcache,
+     }
+ }
+ 
++/* If push is true, push lr_value to the Guarded Control Stack.
++   Otherwise, remove newest entry from the Guarded Control Stack.  */
++
++static void
++aarch64_push_gcs_entry (regcache *regs, CORE_ADDR lr_value)
++{
++  gdbarch *arch = regs->arch ();
++  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
++  CORE_ADDR gcs_addr;
++
++  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
++						   &gcs_addr);
++  if (status != REG_VALID)
++    error ("Can't read $gcspr.");
++
++  gcs_addr -= 8;
++  gdb_byte buf[8];
++  store_integer (buf, gdbarch_byte_order (arch), lr_value);
++  if (target_write_memory (gcs_addr, buf, sizeof (buf)) != 0)
++    error ("Can't write to Guarded Control Stack.");
++
++  /* Update GCSPR.  */
++  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr);
++}
++
++static void
++aarch64_pop_gcs_entry (regcache *regs)
++{
++  gdbarch *arch = regs->arch ();
++  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
++  CORE_ADDR gcs_addr;
++
++  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
++						   &gcs_addr);
++  if (status != REG_VALID)
++    error ("Can't read $gcspr.");
++
++  /* Update GCSPR.  */
++  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr + 8);
++}
++
+ /* Implement the "push_dummy_call" gdbarch method.  */
+ 
+ static CORE_ADDR
+@@ -3643,47 +3684,6 @@ struct aarch64_displaced_step_data
+   aarch64_displaced_step_copy_insn_closure *dsc;
+ };
+ 
+-/* If push is true, push lr_value to the Guarded Control Stack.
+-   Otherwise, remove newest entry from the Guarded Control Stack.  */
+-
+-static void
+-aarch64_push_gcs_entry (regcache *regs, CORE_ADDR lr_value)
+-{
+-  gdbarch *arch = regs->arch ();
+-  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
+-  CORE_ADDR gcs_addr;
+-
+-  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
+-						   &gcs_addr);
+-  if (status != REG_VALID)
+-    error ("Can't read $gcspr.");
+-
+-  gcs_addr -= 8;
+-  gdb_byte buf[8];
+-  store_integer (buf, gdbarch_byte_order (arch), lr_value);
+-  if (target_write_memory (gcs_addr, buf, sizeof (buf)) != 0)
+-    error ("Can't write to Guarded Control Stack.");
+-
+-  /* Update GCSPR.  */
+-  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr);
+-}
+-
+-static void
+-aarch64_pop_gcs_entry (regcache *regs)
+-{
+-  gdbarch *arch = regs->arch ();
+-  aarch64_gdbarch_tdep *tdep = gdbarch_tdep<aarch64_gdbarch_tdep> (arch);
+-  CORE_ADDR gcs_addr;
+-
+-  enum register_status status = regs->cooked_read (tdep->gcs_reg_base,
+-						   &gcs_addr);
+-  if (status != REG_VALID)
+-    error ("Can't read $gcspr.");
+-
+-  /* Update GCSPR.  */
+-  regcache_cooked_write_unsigned (regs, tdep->gcs_reg_base, gcs_addr + 8);
+-}
+-
+ /* Implementation of aarch64_insn_visitor method "b".  */
+ 
+ static void
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index f9e40fe18e5..84b1d6dc99c 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -70,6 +70,12 @@ handler (int sig)
+   handler_gcspr = get_gcspr ();
+ }
+ 
++static int __attribute__ ((unused))
++called_from_gdb (int val)
++{
++  return val + 1;
++}
++
+ /* Corrupt the return address to see if GDB will report a SIGSEGV with the expected
+    $_siginfo.si_code.  */
+ static void __attribute__ ((noinline))
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.exp b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+index 7bf7b6f0c98..c9dd4a1ec84 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.exp
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.exp
+@@ -34,6 +34,11 @@ gdb_test "print \$gcspr == gcspr" ". = 1" "GDB has the correct gcspr value"
+ gdb_test_no_output "set \$gcspr_in_main = \$gcspr" \
+     "save gcspr value in main for later"
+ 
++# If the inferior function call fails, we don't want the tests following it
++# to be affected.
++gdb_test_no_output "set unwindonsignal on"
++gdb_test "print called_from_gdb (41)" ". = 42" "call inferior function"
++
+ gdb_test "break handler" "Breakpoint \[0-9\]+ .*aarch64-gcs.c, line \[0-9\]+\\."
+ gdb_test "handle SIGUSR1 nostop" \
+     ".*\r\nSIGUSR1\\s+No\\s+Yes\\s+Yes\\s+User defined signal 1" \
+-- 
+2.25.1
+
+
+From 64d46d64e4fc099a0f2e152f250d16c709edab11 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Thu, 4 Jul 2024 00:45:04 -0300
+Subject: [PATCH 26/27] Print error message in testcases when GCS bit isn't
+ found in AT_HWCAP2.
+
+---
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.c      | 5 ++++-
+ gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c | 5 ++++-
+ gdb/testsuite/gdb.arch/aarch64-gcs.c           | 5 ++++-
+ 3 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+index 7508f7b77fa..83c72875344 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+@@ -83,7 +83,10 @@ int
+ main (void)
+ {
+   if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
+-    return EXIT_FAILURE;
++    {
++      fprintf (stderr, "GCS support not found in AT_HWCAP2\n");
++      return EXIT_FAILURE;
++    }
+ 
+   /* Force shadow stacks on, our tests *should* be fine with or
+      without libc support and with or without this having ended
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+index 6abcf05070b..557fb3b0fdd 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+@@ -71,7 +71,10 @@ int
+ main (void)
+ {
+   if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
+-    return EXIT_FAILURE;
++    {
++      fprintf (stderr, "GCS support not found in AT_HWCAP2\n");
++      return EXIT_FAILURE;
++    }
+ 
+   /* Force shadow stacks on, our tests *should* be fine with or
+      without libc support and with or without this having ended
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index 84b1d6dc99c..a87ee189096 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -116,7 +116,10 @@ int
+ main (void)
+ {
+   if (!(getauxval (AT_HWCAP2) & HWCAP2_GCS))
+-    return EXIT_FAILURE;
++    {
++      fprintf (stderr, "GCS support not found in AT_HWCAP2\n");
++      return EXIT_FAILURE;
++    }
+ 
+   /* Force shadow stacks on, our tests *should* be fine with or
+      without libc support and with or without this having ended
+-- 
+2.25.1
+
+
+From da6b6b916a0bf7fcf862253cb282e54edc41f6a6 Mon Sep 17 00:00:00 2001
+From: Thiago Jung Bauermann <thiago.bauermann@linaro.org>
+Date: Thu, 4 Jul 2024 00:20:49 -0300
+Subject: [PATCH 27/27] Update ABI constant values to match Linux kernel GCS
+ patches v9
+
+- HWCAP2_GCS
+- NT_ARM_GCS
+- PR_GET_SHADOW_STACK_STATUS
+- PR_SET_SHADOW_STACK_STATUS
+---
+ gdb/arch/aarch64-gcs-linux.h                   | 2 +-
+ gdb/testsuite/gdb.arch/aarch64-gcs-core.c      | 6 +++---
+ gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c | 6 +++---
+ gdb/testsuite/gdb.arch/aarch64-gcs.c           | 6 +++---
+ include/elf/common.h                           | 2 +-
+ 5 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/gdb/arch/aarch64-gcs-linux.h b/gdb/arch/aarch64-gcs-linux.h
+index 761c498b76a..29e9e558298 100644
+--- a/gdb/arch/aarch64-gcs-linux.h
++++ b/gdb/arch/aarch64-gcs-linux.h
+@@ -24,7 +24,7 @@
+ 
+ /* Feature check for Guarded Control Stack.  */
+ #ifndef HWCAP2_GCS
+-#define HWCAP2_GCS (1UL << 48)
++#define HWCAP2_GCS (1UL << 63)
+ #endif
+ 
+ /* The GCS regset consists of a single 64-bit register.  */
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+index 83c72875344..27a451daa01 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-core.c
+@@ -23,12 +23,12 @@
+ 
+ /* Feature check for Guarded Control Stack.  */
+ #ifndef HWCAP2_GCS
+-#define HWCAP2_GCS (1UL << 48)
++#define HWCAP2_GCS (1UL << 63)
+ #endif
+ 
+ #ifndef PR_GET_SHADOW_STACK_STATUS
+-#define PR_GET_SHADOW_STACK_STATUS 71
+-#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_GET_SHADOW_STACK_STATUS 74
++#define PR_SET_SHADOW_STACK_STATUS 75
+ #define PR_SHADOW_STACK_ENABLE (1UL << 0)
+ #endif
+ 
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+index 557fb3b0fdd..3555ec1aa85 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs-disp-step.c
+@@ -23,12 +23,12 @@
+ 
+ /* Feature check for Guarded Control Stack.  */
+ #ifndef HWCAP2_GCS
+-#define HWCAP2_GCS (1UL << 48)
++#define HWCAP2_GCS (1UL << 63)
+ #endif
+ 
+ #ifndef PR_GET_SHADOW_STACK_STATUS
+-#define PR_GET_SHADOW_STACK_STATUS 71
+-#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_GET_SHADOW_STACK_STATUS 74
++#define PR_SET_SHADOW_STACK_STATUS 75
+ #define PR_SHADOW_STACK_ENABLE (1UL << 0)
+ #endif
+ 
+diff --git a/gdb/testsuite/gdb.arch/aarch64-gcs.c b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+index a87ee189096..a20dd1f8077 100644
+--- a/gdb/testsuite/gdb.arch/aarch64-gcs.c
++++ b/gdb/testsuite/gdb.arch/aarch64-gcs.c
+@@ -24,12 +24,12 @@
+ 
+ /* Feature check for Guarded Control Stack.  */
+ #ifndef HWCAP2_GCS
+-#define HWCAP2_GCS (1UL << 48)
++#define HWCAP2_GCS (1UL << 63)
+ #endif
+ 
+ #ifndef PR_GET_SHADOW_STACK_STATUS
+-#define PR_GET_SHADOW_STACK_STATUS 71
+-#define PR_SET_SHADOW_STACK_STATUS 72
++#define PR_GET_SHADOW_STACK_STATUS 74
++#define PR_SET_SHADOW_STACK_STATUS 75
+ #define PR_SHADOW_STACK_ENABLE (1UL << 0)
+ #endif
+ 
+diff --git a/include/elf/common.h b/include/elf/common.h
+index 09d11ae586b..54c66c9eff4 100644
+--- a/include/elf/common.h
++++ b/include/elf/common.h
+@@ -739,7 +739,7 @@
+ 					/*   Note: name must be "LINUX".  */
+ #define NT_ARM_ZT       0x40d           /* AArch64 SME2 ZT registers.  */
+ 					/*   Note: name must be "LINUX".  */
+-#define NT_ARM_GCS	0x40e		/* AArch64 Guarded Control Stack
++#define NT_ARM_GCS	0x40f		/* AArch64 Guarded Control Stack
+ 					   registers.  */
+ 					/*   Note  name must be "LINUX".  */
+ #define NT_ARC_V2	0x600		/* ARC HS accumulator/extra registers.  */
+-- 
+2.25.1
+
