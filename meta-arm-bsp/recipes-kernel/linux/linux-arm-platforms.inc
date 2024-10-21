@@ -91,7 +91,10 @@ COMPATIBLE_MACHINE:juno = "juno"
 KBUILD_DEFCONFIG:juno = "defconfig"
 KCONFIG_MODE:juno = "--alldefconfig"
 FILESEXTRAPATHS:prepend:juno := "${ARMBSPFILESPATHS}"
-SRC_URI:append:juno = " file://juno-dts-mhu-doorbell.patch"
+SRC_URI:append:juno = " \
+    file://juno-dts-mhu-doorbell.patch \
+    file://no-fsl-ifc-nand.cfg \
+    "
 
 #
 # Musca B1/S2 can't run Linux
@@ -116,6 +119,7 @@ SRC_URI:append:n1sdp = " \
     file://enable-realtek-R8169.cfg \
     file://enable-usb_conn_gpio.cfg \
     file://usb_xhci_pci_renesas.cfg \
+    file://no-fsl-ifc-nand.cfg \
     "
 # Since we use the intree defconfig and the preempt-rt turns off some configs
 # do_kernel_configcheck will display warnings. So, lets disable it.
