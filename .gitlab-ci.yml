@@ -33,9 +33,6 @@ stages:
     IMAGE_DIR: $CI_PROJECT_DIR/work/build/tmp/deploy/images
     TOOLCHAIN_LINK_DIR: $CI_PROJECT_DIR/work/build/toolchains
   before_script:
-    - echo KAS_WORK_DIR = $KAS_WORK_DIR
-    - echo SSTATE_DIR = $SSTATE_DIR
-    - echo DL_DIR = $DL_DIR
     - rm -rf $KAS_WORK_DIR
     - mkdir --verbose --parents $KAS_WORK_DIR $KAS_REPO_REF_DIR $SSTATE_DIR $DL_DIR $TOOLCHAIN_DIR $TOOLCHAIN_LINK_DIR
     # Must do this here, as it's the only way to make sure the toolchain is installed on the same builder
@@ -78,6 +75,8 @@ update-repos:
   script:
     - |
       exit_code=0
+
+      printenv
 
       if [ -n "$KAS_REPO_REF_DIR" ]; then
         flock --verbose --timeout 60 $KAS_REPO_REF_DIR --command ./ci/update-repos || exit_code=$?
