@@ -76,8 +76,16 @@ update-repos:
   extends: .setup
   stage: prep
   script:
-    - flock --verbose --timeout 60 $KAS_REPO_REF_DIR ./ci/update-repos
+    - |
+      exit_code=0
 
+      if [ -n "$KAS_REPO_REF_DIR" ]; then
+        flock --verbose --timeout 60 $KAS_REPO_REF_DIR --command ./ci/update-repos || exit_code=$?
+        # Exit now if that failed, unless the status was 128 (fetch failed)
+        test $exit_code != 0 -a $exit_code != 128 && exit 1
+      fi
+
+      exit $exit_code
 #
 # Build stage, the actual build jobs
 #
